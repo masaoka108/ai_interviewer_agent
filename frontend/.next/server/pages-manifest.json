@@ -1,8 +1,7 @@
 {
-  "/_error": "pages/_error.js",
   "/_app": "pages/_app.js",
+  "/_error": "pages/_error.js",
   "/_document": "pages/_document.js",
-  "/job-postings/[id]/interviews/[interviewId]": "pages/job-postings/[id]/interviews/[interviewId].js",
-  "/job-postings": "pages/job-postings.js",
-  "/interviews/[url]": "pages/interviews/[url].js"
+  "/job-postings/[id]": "pages/job-postings/[id].js",
+  "/interviews/[url]/session": "pages/interviews/[url]/session.js"
 }

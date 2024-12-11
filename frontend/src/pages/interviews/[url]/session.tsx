@@ -5,6 +5,32 @@ import { apiClient } from '@/lib/apiClient';
 import { InterviewData, CustomQuestion, BaseQuestion } from '@/types';
 import Image from 'next/image';
 
+// 型定義を追加
+interface Window {
+  SpeechRecognition?: new () => SpeechRecognition;
+  webkitSpeechRecognition?: new () => SpeechRecognition;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (event: Event) => void;
+  onend: (event: Event) => void;
+  onerror: (event: SpeechRecognitionErrorEvent) => void;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  start: () => void;
+  stop: () => void;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: 'aborted' | 'not-allowed' | 'no-speech' | string;
+}
+
+interface SpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResultList;
+}
+
 export default function InterviewSession() {
   console.log('InterviewSession component rendering');
   const router = useRouter();
@@ -29,7 +55,8 @@ export default function InterviewSession() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [showStartButton, setShowStartButton] = useState(true);
   const [isRecognitionEnabled, setIsRecognitionEnabled] = useState(false);
-  const retryCountRef = useRef(0);
+  const [retryCount, setRetryCount] = useState(0);
+  const [isRecognitionPaused, setIsRecognitionPaused] = useState(false);
   const MAX_RETRY_COUNT = 3;
   const RETRY_DELAY = 2000;
   const [browserSupported, setBrowserSupported] = useState(true);
@@ -45,45 +72,37 @@ export default function InterviewSession() {
     console.log('Speech recognition result received');
     const results = Array.from(event.results);
     
-    let finalTranscript = '';
-    let currentInterim = '';
-
-    results.forEach(result => {
-      if (result.isFinal) {
-        finalTranscript += result[0].transcript;
-      } else {
-        currentInterim += result[0].transcript;
-      }
-    });
-
-    if (finalTranscript) {
-      console.log('Final transcript:', finalTranscript);
-      setTranscription(prev => prev + finalTranscript + ' ');
-    }
-    
-    if (currentInterim) {
-      console.log('Interim transcript:', currentInterim);
-      setInterimTranscript(currentInterim);
+    // 最新の結果のみを処理
+    const lastResult = results[results.length - 1];
+    if (lastResult.isFinal) {
+      const finalText = lastResult[0].transcript;
+      console.log('Final transcript:', finalText);
+      // 最新の結果を追加（改行付き）
+      setTranscription(prev => {
+        // 空の場合は改行なしで追加
+        if (!prev) return finalText;
+        // 既に内容がある場合は改行を入れて追加
+        return `${prev}\n${finalText}`;
+      });
+      setInterimTranscript('');
+    } else {
+      // 中間結果の更新
+      const interimText = lastResult[0].transcript;
+      setInterimTranscript(interimText);
     }
   }, []);
 
   // 音声認識の開始
-  const startSpeechRecognition = useCallback(async () => {
-    if (!recognitionRef.current) {
-      console.error('Speech recognition not initialized');
-      return;
-    }
-
+  const startSpeechRecognition = useCallback(() => {
     try {
-      // 既に開始している場合は一旦停止
+      if (!recognitionRef.current) {
+        console.log('Recognition not initialized');
+        return;
+      }
+
       if (isListening) {
-        console.log('Recognition is already running, stopping first...');
-        try {
-          recognitionRef.current.stop();
-          await new Promise(resolve => setTimeout(resolve, 100)); // 短い待機時間を設定
-        } catch (error) {
-          console.log('Error stopping existing recognition:', error);
-        }
+        console.log('Recognition is already running');
+        return;
       }
 
       console.log('Starting speech recognition...');
@@ -91,40 +110,35 @@ export default function InterviewSession() {
       setIsRecognitionEnabled(true);
       setIsListening(true);
       autoRestartRef.current = true;
-      console.log('Speech recognition started successfully');
+      setError(''); // エラーメッセージをクリア
     } catch (error) {
-      console.error('Failed to start speech recognition:', error);
-      if (error instanceof DOMException && error.name === 'NotAllowedError') {
-        setError('マイクの使用が許可されていません');
-      } else {
-        setError('音声認識の開始に失敗しました');
-      }
-      setIsRecognitionEnabled(false);
-      setIsListening(false);
-      autoRestartRef.current = false;
+      console.error('Error starting speech recognition:', error);
+      setError('音声認識の開始に失敗しました。ページを更新してください。');
     }
   }, [isListening]);
 
   // 音声認識の停止
   const stopSpeechRecognition = useCallback(() => {
-    if (!recognitionRef.current) {
-      return;
-    }
-
     try {
+      if (!recognitionRef.current) {
+        console.log('Recognition not initialized');
+        return;
+      }
+
+      if (!isListening) {
+        console.log('Recognition is not running');
+        return;
+      }
+
       console.log('Stopping speech recognition...');
-      autoRestartRef.current = false;
       recognitionRef.current.stop();
       setIsRecognitionEnabled(false);
       setIsListening(false);
-      console.log('Speech recognition stopped successfully');
+      autoRestartRef.current = false;
     } catch (error) {
-      console.error('Failed to stop speech recognition:', error);
-      // エラーが発生しても状態をリセット
-      setIsRecognitionEnabled(false);
-      setIsListening(false);
+      console.error('Error stopping speech recognition:', error);
     }
-  }, []);
+  }, [isListening]);
 
   // 音声認識の初期化
   useEffect(() => {
@@ -134,7 +148,6 @@ export default function InterviewSession() {
 
     console.log('Initializing speech recognition...');
     
-    // ブラウザ固有の SpeechRecognition オブジェクトを取得
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     
     if (!SpeechRecognition) {
@@ -152,6 +165,7 @@ export default function InterviewSession() {
     recognition.onstart = () => {
       console.log('Speech recognition service has started');
       setIsListening(true);
+      setError('');
     };
 
     recognition.onend = () => {
@@ -159,49 +173,60 @@ export default function InterviewSession() {
       setIsListening(false);
       
       // 自動再開が有効な場合は再起動
-      if (autoRestartRef.current && isRecognitionEnabled) {
+      if (autoRestartRef.current && isRecognitionEnabled && !isListening) {
         console.log('Automatically restarting speech recognition...');
-        try {
-          setTimeout(() => {
-            if (autoRestartRef.current && !isListening) {
+        setTimeout(() => {
+          if (autoRestartRef.current && !isListening) {
+            try {
               recognition.start();
+            } catch (error) {
+              console.error('Error restarting recognition:', error);
+              setError('音声認識の再開に失敗しました。ページを更新してください。');
             }
-          }, 100);
-        } catch (error) {
-          console.error('Error restarting recognition:', error);
-        }
+          }
+        }, 1000);
       }
     };
 
-    recognition.onerror = (event) => {
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.error('Speech recognition error:', event.error);
-      if (event.error === 'not-allowed') {
-        setError('マイクの使用が許可されていません。ブラウザの設定を確認してください。');
-      } else if (event.error === 'no-speech') {
-        console.log('No speech detected');
-      } else {
-        setError('音声認識でエラーが発生しました');
+      
+      switch (event.error) {
+        case 'not-allowed':
+          setError('マイクの使用が許可されていません。ブラウザの設定を確認してください。');
+          autoRestartRef.current = false;
+          break;
+          
+        case 'no-speech':
+          console.log('No speech detected');
+          break;
+          
+        case 'aborted':
+          console.log('Recognition aborted');
+          if (autoRestartRef.current && isRecognitionEnabled) {
+            setTimeout(() => {
+              startSpeechRecognition();
+            }, 1000);
+          }
+          break;
+          
+        default:
+          setError('音声認識でエラーが発生しました。');
+          if (autoRestartRef.current && isRecognitionEnabled) {
+            setTimeout(() => {
+              startSpeechRecognition();
+            }, 1000);
+          }
       }
-      setIsListening(false);
-      autoRestartRef.current = false;
     };
 
     recognition.onresult = handleSpeechResult;
-
     recognitionRef.current = recognition;
-    setIsInitialized(true);
 
     return () => {
-      if (recognitionRef.current) {
-        try {
-          autoRestartRef.current = false;
-          recognitionRef.current.stop();
-        } catch (error) {
-          console.log('Error cleaning up recognition:', error);
-        }
-      }
+      stopSpeechRecognition();
     };
-  }, [handleSpeechResult, isRecognitionEnabled]);
+  }, [handleSpeechResult, isRecognitionEnabled, startSpeechRecognition, stopSpeechRecognition]);
 
   // メディアデバイスの権限を要求
   const requestMediaPermissions = useCallback(async () => {
@@ -328,11 +353,32 @@ export default function InterviewSession() {
         }
       };
 
+      console.log('Requesting camera stream...');
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      videoRef.current.srcObject = stream;
-      mediaStreamRef.current = stream;
-      setIsCameraReady(true);
-      console.log('Camera initialized successfully');
+      
+      // ストリームが有効かチェック
+      if (!stream.active) {
+        throw new Error('Camera stream is not active');
+      }
+
+      // videoRef.currentが存在することを再確認
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        mediaStreamRef.current = stream;
+        
+        // ストリームの再生開始を待機
+        await videoRef.current.play().catch(error => {
+          console.error('Error playing video:', error);
+          throw error;
+        });
+        
+        setIsCameraReady(true);
+        console.log('Camera initialized successfully');
+      } else {
+        // videoRef.currentが存在しない場合はストリームを停止
+        stream.getTracks().forEach(track => track.stop());
+        throw new Error('Video element not available');
+      }
 
     } catch (error) {
       console.error('Error initializing camera:', error);
@@ -349,6 +395,7 @@ export default function InterviewSession() {
       }
       
       setError(errorMessage);
+      setIsCameraReady(false);
       throw error;
     }
   }, []);
@@ -481,19 +528,54 @@ export default function InterviewSession() {
 
   // クリーンアップ
   useEffect(() => {
-    return () => {
-      stopSpeechRecognition();
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+    // コンポーネントのマウント時の初期化
+    const initializeDevices = async () => {
+      try {
+        await requestMediaPermissions();
+        await startCamera();
+      } catch (error) {
+        console.error('Error during initialization:', error);
       }
     };
-  }, []);
+
+    initializeDevices();
+
+    // クリーンアップ関数
+    return () => {
+      console.log('Cleaning up resources...');
+      
+      // 音声認識の停止
+      if (recognitionRef.current) {
+        try {
+          autoRestartRef.current = false;
+          recognitionRef.current.stop();
+        } catch (error) {
+          console.error('Error stopping recognition:', error);
+        }
+      }
+
+      // カメラストリームの停止
+      if (mediaStreamRef.current) {
+        try {
+          mediaStreamRef.current.getTracks().forEach(track => {
+            track.stop();
+            console.log(`Stopped track: ${track.kind}`);
+          });
+          mediaStreamRef.current = null;
+        } catch (error) {
+          console.error('Error stopping media stream:', error);
+        }
+      }
+
+      // ビデオ要素のクリーンアップ
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+
+      setIsCameraReady(false);
+      setIsListening(false);
+    };
+  }, [requestMediaPermissions, startCamera]);
 
   // ビデオ要素のマウント状態を監視
   useEffect(() => {
@@ -642,7 +724,7 @@ export default function InterviewSession() {
       console.log('Starting interview...');
       setShowStartButton(false);
 
-      // まず権限を要求
+      // まず権を要求
       const granted = await requestMediaPermissions();
       if (!granted) {
         console.error('Media permissions not granted');
@@ -862,70 +944,28 @@ export default function InterviewSession() {
                   </p>
                 </div>
 
-                <div className="mb-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                <div className="mt-8">
+                  <h3 className="text-lg font-semibold mb-2">
                     あなたの回答:
                   </h3>
-                  <p className="text-gray-700 min-h-[100px] p-4 bg-gray-50 rounded whitespace-pre-wrap">
-                    {transcript}
-                  </p>
-                </div>
-
-                <div className="flex justify-end space-x-4">
-                  <button
-                    onClick={() => {
-                      setTranscript('');
-                      handleNextQuestion();
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                    disabled={isSpeaking}
-                  >
-                    次の質問へ
-                  </button>
-                </div>
-              </div>
-
-              {/* 音声認識の結果表示 */}
-              <div className="mt-8 bg-white rounded-lg shadow-lg p-6">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-                      <span className="text-sm text-gray-600">
-                        {isListening ? '音声認識中...' : '音声認識停止中'}
-                      </span>
-                    </div>
-                    <button
-                      onClick={toggleSpeechRecognition}
-                      className={`px-4 py-2 rounded-lg font-medium ${
-                        isListening
-                          ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                          : 'bg-green-100 text-green-700 hover:bg-green-200'
-                      }`}
-                    >
-                      {isListening ? '音声認識を停止' : '音声認識を開始'}
-                    </button>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <h3 className="font-medium text-gray-900">あなたの回答:</h3>
-                    <div className="bg-gray-50 rounded p-4 min-h-[100px]">
-                      <p className="text-gray-800 whitespace-pre-wrap">
-                        {transcription}
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <p className="text-gray-700 whitespace-pre-line min-h-[100px]">
+                      {transcription}
+                      {interimTranscript && (
                         <span className="text-gray-400 italic">
                           {interimTranscript}
                         </span>
-                      </p>
-                    </div>
+                      )}
+                    </p>
                   </div>
 
-                  <div className="flex justify-end">
+                  <div className="flex justify-end mt-4">
                     <button
                       onClick={() => {
                         setTranscription('');
                         setInterimTranscript('');
                       }}
-                      className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900"
+                      className="px-4 py-2 text-sm bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
                     >
                       回答をクリア
                     </button>

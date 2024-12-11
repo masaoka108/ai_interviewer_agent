@@ -1,1 +1,0 @@
-{"c":["pages/job-postings/[id]/interviews/[interviewId]","pages/job-postings","webpack"],"r":["pages/job-postings"],"m":["./node_modules/next/dist/build/webpack/loaders/next-client-pages-loader.js?absolutePagePath=%2Fapp%2Fsrc%2Fpages%2Fjob-postings%2Findex.tsx&page=%2Fjob-postings!","./src/pages/job-postings/index.tsx"]}

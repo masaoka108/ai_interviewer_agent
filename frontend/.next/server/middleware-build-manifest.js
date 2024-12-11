@@ -20,20 +20,15 @@ self.__BUILD_MANIFEST = {
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/interviews/[url]": [
+    "/interviews/[url]/session": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/interviews/[url].js"
+      "static/chunks/pages/interviews/[url]/session.js"
     ],
-    "/job-postings": [
+    "/job-postings/[id]": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/job-postings.js"
-    ],
-    "/job-postings/[id]/interviews/[interviewId]": [
-      "static/chunks/webpack.js",
-      "static/chunks/main.js",
-      "static/chunks/pages/job-postings/[id]/interviews/[interviewId].js"
+      "static/chunks/pages/job-postings/[id].js"
     ]
   },
   "ampFirstPages": []
