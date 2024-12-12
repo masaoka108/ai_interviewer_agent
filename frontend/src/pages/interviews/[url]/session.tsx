@@ -31,6 +31,20 @@ interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList;
 }
 
+// 新しい型定義を追加
+interface Answer {
+  question_id: number;
+  question_text: string;
+  answer_text: string;
+  question_type: 'base' | 'custom';
+}
+
+// MediaRecorderのオプションを定義
+const MEDIA_RECORDER_OPTIONS = {
+  mimeType: 'video/webm;codecs=vp8,opus',
+  videoBitsPerSecond: 2500000, // 2.5 Mbps
+};
+
 export default function InterviewSession() {
   console.log('InterviewSession component rendering');
   const router = useRouter();
@@ -68,6 +82,9 @@ export default function InterviewSession() {
   const autoRestartRef = useRef(false);
   const [hasSpokenInitialQuestion, setHasSpokenInitialQuestion] = useState(false);
   const speechSynthesisRef = useRef<SpeechSynthesis | null>(null);
+  const [isLastQuestionSpoken, setIsLastQuestionSpoken] = useState(false);
+  const [answers, setAnswers] = useState<Answer[]>([]);
+  const [isStreamActive, setIsStreamActive] = useState(false);
 
   // 全ての質問を統合
   const questions = useMemo(() => {
@@ -89,7 +106,7 @@ export default function InterviewSession() {
     return [...formattedBaseQuestions, ...formattedCustomQuestions];
   }, [baseQuestions, customQuestions]);
 
-  // 音声読み上げ関数
+  // 音声読み上げ関数を修正
   const speak = useCallback((text: string, onEnd?: () => void) => {
     if (!window.speechSynthesis) {
       console.error('Speech synthesis not supported');
@@ -97,17 +114,24 @@ export default function InterviewSession() {
       return;
     }
 
-    // 既に発話中の場合は中断
-    if (isSpeaking) {
-      console.log('Already speaking, cancelling current speech');
-      window.speechSynthesis.cancel();
-    }
+    // 既存の発話をキャンセル
+    window.speechSynthesis.cancel();
 
     try {
+      console.log('Starting speech synthesis for:', text);
       const utterance = new SpeechSynthesisUtterance(text);
+      
+      // 日本語の音声を探す
+      const voices = window.speechSynthesis.getVoices();
+      const jaVoice = voices.find(voice => voice.lang === 'ja-JP');
+      if (jaVoice) {
+        utterance.voice = jaVoice;
+      }
+
       utterance.lang = 'ja-JP';
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
+      utterance.volume = 1.0;
 
       utterance.onstart = () => {
         console.log('Speech started:', text);
@@ -117,10 +141,11 @@ export default function InterviewSession() {
       utterance.onend = () => {
         console.log('Speech ended');
         setIsSpeaking(false);
+        if (currentQuestionIndex === baseQuestions.length + customQuestions.length - 1) {
+          setIsLastQuestionSpoken(true);
+        }
         if (onEnd) {
-          setTimeout(() => {
-            onEnd();
-          }, 1000); // 1秒の遅延を追加
+          onEnd();
         }
       };
 
@@ -136,7 +161,7 @@ export default function InterviewSession() {
       setIsSpeaking(false);
       setError('音声合成でエラーが発生しました。');
     }
-  }, [isSpeaking]);
+  }, [isSpeaking, currentQuestionIndex, baseQuestions.length, customQuestions.length]);
 
   // 次の質問へ進む関数
   const handleNextQuestion = useCallback(async () => {
@@ -146,58 +171,91 @@ export default function InterviewSession() {
     }
 
     try {
-      // 音声認識を一時停止
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
 
-      // 現在の回答をクリア
+      // 現在の質問と回答を保存
+      const currentQuestionData = currentQuestionIndex < baseQuestions.length
+        ? {
+            id: baseQuestions[currentQuestionIndex].id,
+            text: baseQuestions[currentQuestionIndex].question_text,
+            type: 'base' as const
+          }
+        : {
+            id: customQuestions[currentQuestionIndex - baseQuestions.length].id,
+            text: customQuestions[currentQuestionIndex - baseQuestions.length].question_text,
+            type: 'custom' as const
+          };
+
+      setAnswers(prev => [...prev, {
+        question_id: currentQuestionData.id,
+        question_text: currentQuestionData.text,
+        answer_text: transcription,
+        question_type: currentQuestionData.type
+      }]);
+
       setTranscription('');
       setInterimTranscript('');
 
-      // 次の質問のインデックスを設定
       setCurrentQuestionIndex(prevIndex => {
         const nextIndex = prevIndex + 1;
-        if (nextIndex < questions.length) {
-          const nextQuestion = questions[nextIndex].question;
-          speak(nextQuestion, () => {
-            // 読み上げ完了後に音声認識を再開
-            if (recognitionRef.current && isRecognitionEnabled) {
-              try {
-                recognitionRef.current.start();
-              } catch (error) {
-                console.error('Error restarting recognition:', error);
+        const totalQuestions = (baseQuestions?.length || 0) + (customQuestions?.length || 0);
+        
+        if (nextIndex < totalQuestions) {
+          let nextQuestionText = '';
+          if (nextIndex < (baseQuestions?.length || 0)) {
+            nextQuestionText = baseQuestions[nextIndex]?.question_text || '';
+          } else {
+            const customIndex = nextIndex - (baseQuestions?.length || 0);
+            nextQuestionText = customQuestions[customIndex]?.question_text || '';
+          }
+          
+          if (nextQuestionText) {
+            speak(nextQuestionText, () => {
+              if (nextIndex === totalQuestions - 1) {
+                setIsLastQuestionSpoken(true);
               }
-            }
-          });
-          return nextIndex;
+              if (recognitionRef.current && isRecognitionEnabled) {
+                try {
+                  recognitionRef.current.start();
+                } catch (error) {
+                  console.error('Error restarting recognition:', error);
+                }
+              }
+            });
+          }
         }
-        return prevIndex;
+        return nextIndex;
       });
     } catch (error) {
       console.error('Error handling next question:', error);
       setError('次の質問への移動中にエラーが発生しました。');
     }
-  }, [questions, isRecognitionEnabled, speak, isSpeaking]);
+  }, [baseQuestions, customQuestions, currentQuestionIndex, transcription, isRecognitionEnabled, speak, isSpeaking]);
 
-  // 初期質問の読み上げ
+  // 初期質問の読み上げを修正
   useEffect(() => {
-    if (questions.length > 0 && !hasSpokenInitialQuestion && !isSpeaking) {
+    if (baseQuestions?.length > 0 && !hasSpokenInitialQuestion && !isSpeaking && isInitialized) {
       console.log('Speaking initial question');
-      const currentQuestion = questions[currentQuestionIndex].question;
-      setHasSpokenInitialQuestion(true);
-      speak(currentQuestion, () => {
-        // 読み上げ完了後に音声認識を開始
-        if (recognitionRef.current && isRecognitionEnabled) {
-          try {
-            recognitionRef.current.start();
-          } catch (error) {
-            console.error('Error starting recognition:', error);
-          }
-        }
-      });
+      const initialQuestion = baseQuestions[0]?.question_text;
+      if (initialQuestion) {
+        setHasSpokenInitialQuestion(true);
+        // 少し遅延を入れて確実に音声合成を初期化
+        setTimeout(() => {
+          speak(initialQuestion, () => {
+            if (recognitionRef.current && isRecognitionEnabled) {
+              try {
+                recognitionRef.current.start();
+              } catch (error) {
+                console.error('Error starting recognition:', error);
+              }
+            }
+          });
+        }, 1000);
+      }
     }
-  }, [questions, currentQuestionIndex, isSpeaking, isRecognitionEnabled, speak, hasSpokenInitialQuestion]);
+  }, [baseQuestions, isSpeaking, isRecognitionEnabled, speak, hasSpokenInitialQuestion, isInitialized]);
 
   // 音声認識の結果を処理
   const handleSpeechResult = useCallback((event: SpeechRecognitionEvent) => {
@@ -377,7 +435,7 @@ export default function InterviewSession() {
         mediaStreamRef.current = null;
       }
 
-      // ブラウザの権限状態をリセット
+      // ブラウザの権限状態をセット
       await navigator.mediaDevices.getUserMedia({ audio: false, video: false })
         .catch(() => console.log('Resetting permissions...'));
 
@@ -478,6 +536,11 @@ export default function InterviewSession() {
       }
 
       const constraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
         video: {
           width: { ideal: 1280 },
           height: { ideal: 720 },
@@ -485,49 +548,29 @@ export default function InterviewSession() {
         }
       };
 
-      console.log('Requesting camera stream...');
+      console.log('Requesting media stream with constraints:', constraints);
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       
-      // ストリームが有効かチェック
+      // ストリームの状態をチェック
       if (!stream.active) {
-        throw new Error('Camera stream is not active');
+        throw new Error('Failed to get active media stream');
       }
 
-      // videoRef.currentが存在することを再確認
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        mediaStreamRef.current = stream;
-        
-        // ストリームの再生開始を待機
-        await videoRef.current.play().catch(error => {
-          console.error('Error playing video:', error);
-          throw error;
-        });
-        
-        setIsCameraReady(true);
-        console.log('Camera initialized successfully');
-      } else {
-        // videoRef.currentが存在しない場合はストリームを停止
-        stream.getTracks().forEach(track => track.stop());
-        throw new Error('Video element not available');
-      }
+      // ストリームの設定
+      videoRef.current.srcObject = stream;
+      mediaStreamRef.current = stream;
+      setIsStreamActive(true);
+
+      // ストリームの再生開始を待機
+      await videoRef.current.play();
+      setIsCameraReady(true);
+      console.log('Camera initialized successfully');
 
     } catch (error) {
       console.error('Error initializing camera:', error);
-      let errorMessage = 'カメラの初期化に失敗しました。';
-      
-      if (error instanceof Error) {
-        if (error.name === 'NotFoundError') {
-          errorMessage = 'カメラが見つかりません。デバイスが正しく接続されているか確認してください。';
-        } else if (error.name === 'NotAllowedError') {
-          errorMessage = 'カメラの使用が許可されていません。ブラウザの設定から許可してください。';
-        } else if (error.name === 'NotReadableError') {
-          errorMessage = 'カメラにアクセスできません。他のアプリケーションが使用している可能性があります。';
-        }
-      }
-      
-      setError(errorMessage);
+      setError('カメラの初期化に失敗しました: ' + error.message);
       setIsCameraReady(false);
+      setIsStreamActive(false);
       throw error;
     }
   }, []);
@@ -547,31 +590,61 @@ export default function InterviewSession() {
     setIsCameraReady(false);
   }, []);
 
-  // 録画の開始
-  const startRecording = (stream: MediaStream) => {
-    try {
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      recordedChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
+  // 録画開始の処理を修正
+  useEffect(() => {
+    if (mediaStreamRef.current && !isRecording && isStreamActive) {
+      try {
+        // まずサポートされているMIMEタイプを確認
+        let options = MEDIA_RECORDER_OPTIONS;
+        if (!MediaRecorder.isTypeSupported(MEDIA_RECORDER_OPTIONS.mimeType)) {
+          console.log('Default codec not supported, trying fallback...');
+          if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+            options = { mimeType: 'video/webm;codecs=vp8' };
+          } else if (MediaRecorder.isTypeSupported('video/webm')) {
+            options = { mimeType: 'video/webm' };
+          } else {
+            throw new Error('No supported video codec found');
+          }
         }
-      };
 
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-        saveRecording(blob);
-      };
+        // ストリームの状態を再確認
+        if (!mediaStreamRef.current.active) {
+          console.log('Stream is not active, attempting to reinitialize...');
+          startCamera().then(() => {
+            if (!mediaStreamRef.current?.active) {
+              throw new Error('Failed to reinitialize media stream');
+            }
+          });
+          return;
+        }
 
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch (error) {
-      console.error('Failed to start recording:', error);
-      setError('録画の開始に失敗しました');
+        console.log('Initializing MediaRecorder with options:', options);
+        const mediaRecorder = new MediaRecorder(mediaStreamRef.current, options);
+        mediaRecorderRef.current = mediaRecorder;
+        recordedChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            recordedChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onerror = (event) => {
+          console.error('MediaRecorder error:', event);
+          setError('録画中にエラーが発生しました');
+        };
+
+        mediaRecorder.start(1000);
+        setIsRecording(true);
+        console.log('MediaRecorder started successfully');
+
+      } catch (error) {
+        console.error('Failed to start recording:', error);
+        setError('録画の開始に失敗しました: ' + error.message);
+        setIsRecording(false);
+      }
     }
-  };
+  }, [mediaStreamRef.current, isRecording, isStreamActive, startCamera]);
 
   // 録画の停止
   const stopRecording = () => {
@@ -641,52 +714,52 @@ export default function InterviewSession() {
     }
   }, [url]);
 
-  // 音声合成の初期化
+  // 音声合成の初期化を修正
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        setIsInitialized(true);
-      }
-
-      window.speechSynthesis.onvoiceschanged = () => {
-        const updatedVoices = window.speechSynthesis.getVoices();
-        if (updatedVoices.length > 0) {
-          setIsInitialized(true);
+      // 音声合成の初期化を確認
+      const initSpeechSynthesis = () => {
+        const voices = window.speechSynthesis.getVoices();
+        if (voices.length > 0) {
+          const jaVoice = voices.find(voice => voice.lang === 'ja-JP');
+          if (jaVoice) {
+            console.log('Japanese voice found:', jaVoice.name);
+            setIsInitialized(true);
+          } else {
+            console.log('No Japanese voice found, using default voice');
+            setIsInitialized(true);
+          }
         }
+      };
+
+      // 初期化時に一度実行
+      initSpeechSynthesis();
+
+      // voiceschangedイベントのリスナーを設定
+      window.speechSynthesis.onvoiceschanged = initSpeechSynthesis;
+
+      // クリーンアップ
+      return () => {
+        window.speechSynthesis.onvoiceschanged = null;
       };
     }
   }, []);
 
   // クリーンアップ
   useEffect(() => {
-    // コンポーネントのマウント時の初期化
-    const initializeDevices = async () => {
-      try {
-        await requestMediaPermissions();
-        await startCamera();
-      } catch (error) {
-        console.error('Error during initialization:', error);
-      }
-    };
-
-    initializeDevices();
-
-    // クリーンアップ関数
     return () => {
       console.log('Cleaning up resources...');
       
-      // 音声認識の停止
-      if (recognitionRef.current) {
+      // 録画の停止
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         try {
-          autoRestartRef.current = false;
-          recognitionRef.current.stop();
+          mediaRecorderRef.current.stop();
         } catch (error) {
-          console.error('Error stopping recognition:', error);
+          console.error('Error stopping media recorder:', error);
         }
       }
 
-      // カメラストリームの停止
+      // ストリームの停止
       if (mediaStreamRef.current) {
         try {
           mediaStreamRef.current.getTracks().forEach(track => {
@@ -705,9 +778,10 @@ export default function InterviewSession() {
       }
 
       setIsCameraReady(false);
-      setIsListening(false);
+      setIsStreamActive(false);
+      setIsRecording(false);
     };
-  }, [requestMediaPermissions, startCamera]);
+  }, []);
 
   // ビデオ要素のマウント状態を監視
   useEffect(() => {
@@ -809,13 +883,13 @@ export default function InterviewSession() {
     }
   }, [error]);
 
-  // 面接開始の処理
+  // 面接開始の処理を修正
   const handleStartInterview = useCallback(async () => {
     try {
       console.log('Starting interview...');
       setShowStartButton(false);
 
-      // まず権を要求
+      // メディア権限の要求
       const granted = await requestMediaPermissions();
       if (!granted) {
         console.error('Media permissions not granted');
@@ -825,22 +899,223 @@ export default function InterviewSession() {
 
       // カメラの初期化を待機
       await startCamera();
-      console.log('Camera initialized successfully');
+      
+      // ストリームの状態を確認
+      if (!mediaStreamRef.current?.active) {
+        throw new Error('Failed to initialize media stream');
+      }
 
       // 音声認識の開始
       await startSpeechRecognition();
-      console.log('Speech recognition started');
+
+      // 音声合成が初期化されているか確認
+      if (!isInitialized) {
+        await new Promise<void>((resolve) => {
+          const checkInit = () => {
+            if (isInitialized) {
+              resolve();
+            } else {
+              setTimeout(checkInit, 100);
+            }
+          };
+          checkInit();
+        });
+      }
 
       // 最初の質問を読み上げる
       if (baseQuestions.length > 0) {
+        console.log('Reading first question:', baseQuestions[0].question_text);
         speak(baseQuestions[0].question_text);
       }
     } catch (error) {
       console.error('Failed to start interview:', error);
-      setError('面接の開始に失敗しました');
+      setError('面接の開始に失敗しました: ' + error.message);
       setShowStartButton(true);
     }
-  }, [requestMediaPermissions, startCamera, startSpeechRecognition, baseQuestions, speak]);
+  }, [requestMediaPermissions, startCamera, startSpeechRecognition, baseQuestions, speak, isInitialized]);
+
+  // 面接終了の処理を追加
+  const handleFinishInterview = useCallback(async () => {
+    try {
+      console.log('\n=== Interview Submission Debug Log ===');
+      
+      // interview オブジェクトの詳細確認
+      console.log('Interview Details:', {
+        id: interview?.id,
+        job_posting_id: interview?.job_posting_id,
+        status: interview?.status,
+        url: interview?.url
+      });
+
+      // 録画データの確認
+      const videoBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+      console.log('Video Data:', {
+        size: videoBlob.size,
+        type: videoBlob.type,
+        chunkCount: recordedChunksRef.current.length
+      });
+
+      // 最後の回答を含めた全回答データの準備
+      const currentQuestionData = currentQuestionIndex < baseQuestions.length
+        ? {
+            id: baseQuestions[currentQuestionIndex].id,
+            text: baseQuestions[currentQuestionIndex].question_text,
+            type: 'base' as const
+          }
+        : {
+            id: customQuestions[currentQuestionIndex - baseQuestions.length].id,
+            text: customQuestions[currentQuestionIndex - baseQuestions.length].question_text,
+            type: 'custom' as const
+          };
+
+      // FormDataの作成
+      const formData = new FormData();
+      
+      // 動画ファイルの追加
+      formData.append('video', videoBlob, 'interview-recording.webm');
+      
+      // 回答データの追加
+      const finalAnswers = [...answers];
+      if (currentQuestionData && transcription) {
+        finalAnswers.push({
+          question_id: currentQuestionData.id,
+          question_text: currentQuestionData.text,
+          answer_text: transcription || "回答なし",
+          question_type: currentQuestionData.type
+        });
+      }
+      formData.append('answers', JSON.stringify(finalAnswers));
+
+      console.log('Request Payload:', {
+        answers: finalAnswers,
+        formData: Array.from(formData.entries()).map(([key, value]) => ({
+          key,
+          value: value instanceof Blob 
+            ? `Blob(${value.size} bytes, ${value.type})` 
+            : typeof value === 'string'
+            ? `String(${value.length} chars): ${value.substring(0, 100)}...`
+            : `Unknown type: ${typeof value}`
+        }))
+      });
+
+      // APIリクエストの送信
+      const response = await apiClient.post(
+        `/interviews/${interview?.id}/complete`,
+        formData,
+        {
+          headers: {
+            'Accept': 'application/json',
+          },
+          // Content-Typeは指定しない（ブラウザが自動的に設定）
+          transformRequest: [(data) => data],
+          timeout: 120000, // タイムアウトを2分に延長
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            console.log(`Upload progress: ${percentCompleted}%`);
+          }
+        }
+      );
+
+      console.log('API Response:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: response.data
+      });
+
+      // 200ステータスコードの場合は成功として扱う
+      if (response.status === 200) {
+        // 面接完了画面へリダイレクト
+        if (router.query.url) {
+          router.push(`/interviews/${router.query.url}/complete`);
+        } else {
+          console.error('Interview URL is undefined');
+          setError('面接URLの取得に失敗しました');
+        }
+      } else {
+        console.error('API Response Error:', {
+          status: response.status,
+          statusText: response.statusText,
+          data: response.data
+        });
+        throw new Error(
+          response.data?.detail || 
+          response.data?.message || 
+          '面接データの保存に失敗しました'
+        );
+      }
+
+    } catch (error: any) {
+      console.error('Error finishing interview:', error);
+      
+      if (error.response) {
+        console.error('Error Response Details:', {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          data: error.response.data,
+          headers: error.response.headers
+        });
+        setError(`面接データの保存に失敗しました: ${
+          error.response.data?.detail || 
+          error.response.data?.message || 
+          error.message
+        }`);
+      } else if (error.request) {
+        console.error('No response received:', error.request);
+        setError('サーバーからの応答がありません。ネットワーク接続を確認してください。');
+      } else {
+        console.error('Error setting up request:', error.message);
+        setError(`リクエストの設定中にエラーが発生しました: ${error.message}`);
+      }
+    }
+  }, [interview, answers, transcription, currentQuestionIndex, baseQuestions, customQuestions, router]);
+
+  // 質問の表示部分を修正
+  const currentQuestion = useMemo(() => {
+    // 質問データが読み込まれていない場合のガード
+    if (!baseQuestions?.length || !customQuestions?.length) {
+      return {
+        text: '',
+        type: 'ベース質問',
+        current: 0,
+        total: 0
+      };
+    }
+
+    if (currentQuestionIndex < baseQuestions.length) {
+      // ベース質問の範囲内のチェック
+      if (!baseQuestions[currentQuestionIndex]) {
+        return {
+          text: '',
+          type: 'ベース質問',
+          current: currentQuestionIndex + 1,
+          total: baseQuestions.length
+        };
+      }
+      return {
+        text: baseQuestions[currentQuestionIndex].question_text,
+        type: 'ベース質問',
+        current: currentQuestionIndex + 1,
+        total: baseQuestions.length
+      };
+    } else {
+      const customIndex = currentQuestionIndex - baseQuestions.length;
+      // カスタム質問の範囲内のチェック
+      if (!customQuestions[customIndex]) {
+        return {
+          text: '',
+          type: 'カスタマイズ質問',
+          current: customIndex + 1,
+          total: customQuestions.length
+        };
+      }
+      return {
+        text: customQuestions[customIndex].question_text,
+        type: 'カスタマイズ質問',
+        current: customIndex + 1,
+        total: customQuestions.length
+      };
+    }
+  }, [currentQuestionIndex, baseQuestions, customQuestions]);
 
   if (error) {
     return (
@@ -854,7 +1129,7 @@ export default function InterviewSession() {
     );
   }
 
-  if (!interview || !baseQuestions.length || !customQuestions.length) {
+  if (!interview || !baseQuestions?.length || !customQuestions?.length) {
     return (
       <CandidateLayout>
         <div className="flex items-center justify-center min-h-screen">
@@ -863,10 +1138,6 @@ export default function InterviewSession() {
       </CandidateLayout>
     );
   }
-
-  const currentQuestion = isBaseQuestion 
-    ? baseQuestions[currentQuestionIndex]
-    : customQuestions[currentQuestionIndex];
 
   return (
     <CandidateLayout>
@@ -989,10 +1260,10 @@ export default function InterviewSession() {
               <div className="bg-white rounded-lg shadow-lg p-6">
                 <div className="mb-6">
                   <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    現在の質問: ({isBaseQuestion ? 'ベース質問' : 'カスタム質問'} {currentQuestionIndex + 1}/{isBaseQuestion ? baseQuestions.length : customQuestions.length})
+                    現在の質問: ({currentQuestion.type} {currentQuestion.current}/{currentQuestion.total})
                   </h3>
                   <p className="text-gray-700">
-                    {currentQuestion?.question_text}
+                    {currentQuestion.text}
                   </p>
                 </div>
 
@@ -1013,11 +1284,19 @@ export default function InterviewSession() {
 
                   <div className="flex justify-end mt-4">
                     <button
-                      onClick={handleNextQuestion}
-                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                      disabled={isSpeaking || currentQuestionIndex >= questions.length - 1}
+                      onClick={
+                        currentQuestionIndex >= baseQuestions.length + customQuestions.length - 1
+                          ? handleFinishInterview
+                          : handleNextQuestion
+                      }
+                      className={`px-4 py-2 rounded ${
+                        isSpeaking 
+                          ? 'bg-gray-400 text-white cursor-not-allowed' 
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                      }`}
+                      disabled={isSpeaking}
                     >
-                      {currentQuestionIndex >= questions.length - 1 ? '面接終了' : '次の質問へ'}
+                      {currentQuestionIndex >= baseQuestions.length + customQuestions.length - 1 ? '面接終了' : '次の質問へ'}
                     </button>
                   </div>
                 </div>

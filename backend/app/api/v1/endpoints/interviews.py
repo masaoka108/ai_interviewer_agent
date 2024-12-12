@@ -1,6 +1,10 @@
 from typing import Any, List, Dict, Optional
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
 from sqlalchemy.orm import Session
+import json
+import os
+from pathlib import Path
+import time
 
 from app.api import deps
 from app.crud import crud_interview
@@ -141,28 +145,121 @@ async def upload_documents(
     )
     return interview
 
-@router.post("/{interview_id}/complete", response_model=Interview)
-def complete_interview(
-    *,
-    db: Session = Depends(deps.get_db),
+@router.post("/{interview_id}/complete")
+async def complete_interview(
     interview_id: int,
-    recording_url: str,
-    ai_evaluation: Dict,
-) -> Any:
-    """
-    面接の完了処理
-    """
-    interview = crud_interview.interview.get(db, id=interview_id)
-    if not interview:
-        raise HTTPException(status_code=404, detail="面接が見つかりません")
-    
-    interview = crud_interview.interview.complete_interview(
-        db,
-        db_obj=interview,
-        recording_url=recording_url,
-        ai_evaluation=ai_evaluation,
-    )
-    return interview
+    video: UploadFile = File(...),
+    answers: str = Form(...),
+    db: Session = Depends(deps.get_db)
+):
+    """面接完了処理"""
+    try:
+        print("\n=== Interview Completion Debug Log ===")
+        print(f"Interview ID: {interview_id}")
+        
+        # 面接データの取得
+        interview = crud_interview.interview.get(db, id=interview_id)
+        if not interview:
+            raise HTTPException(status_code=404, detail="Interview not found")
+
+        # 動画ファイルの保存
+        try:
+            print(f"Video File Info:")
+            print(f"  - Filename: {video.filename}")
+            print(f"  - Content Type: {video.content_type}")
+            video_content = await video.read()
+            print(f"  - File Size: {len(video_content)} bytes")
+            
+            # 動画ファイルの保存パスを設定
+            video_filename = f"interview_{interview_id}_{int(time.time())}.webm"
+            video_path = f"recordings/{video_filename}"
+            
+            # 動画ファイルを保存
+            os.makedirs("recordings", exist_ok=True)
+            with open(video_path, "wb") as f:
+                f.write(video_content)
+            
+            # 面接データの更新（録画URLを保存）
+            crud_interview.interview.update(
+                db,
+                db_obj=interview,
+                obj_in={
+                    "recording_url": video_path,
+                    "status": "completed"
+                }
+            )
+        except Exception as e:
+            print(f"Error saving video: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save video: {str(e)}"
+            )
+
+        # 回答データの処理
+        print("\nAnswers Data:")
+        try:
+            answers_data = json.loads(answers)
+            print(f"  - Parsed JSON: {json.dumps(answers_data, indent=2, ensure_ascii=False)}")
+        except json.JSONDecodeError as e:
+            print(f"  - Error parsing answers JSON: {str(e)}")
+            print(f"  - Raw answers data: {answers}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid answers format: {str(e)}"
+            )
+
+        # バリデーションと回答の保存
+        if not isinstance(answers_data, list):
+            print("Error: answers_data is not a list")
+            raise HTTPException(
+                status_code=422,
+                detail="Answers must be a list of objects"
+            )
+
+        for i, answer in enumerate(answers_data):
+            print(f"\nValidating answer {i + 1}:")
+            required_fields = ['question_id', 'question_text', 'answer_text', 'question_type']
+            missing_fields = [field for field in required_fields if field not in answer]
+            
+            if missing_fields:
+                print(f"  - Missing required fields: {missing_fields}")
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Answer {i + 1} is missing required fields: {missing_fields}"
+                )
+            
+            print(f"  - Question ID: {answer['question_id']}")
+            print(f"  - Question Type: {answer['question_type']}")
+            print(f"  - Answer Text Length: {len(answer['answer_text'])}")
+            
+            try:
+                # 回答データを保存
+                response_data = {
+                    "interview_id": interview_id,
+                    "question_id": answer['question_id'],
+                    "question_text": answer['question_text'],
+                    "answer_text": answer['answer_text'],
+                    "question_type": answer['question_type']
+                }
+                crud_interview.interview.add_response(db, obj_in=response_data)
+            except Exception as e:
+                print(f"Error saving answer {i + 1}: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to save answer {i + 1}: {str(e)}"
+                )
+
+        print("\n=== End Debug Log ===\n")
+        return {"status": "success", "message": "Interview completed successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
 
 @router.get("/{interview_id}/base-questions", response_model=List[BaseQuestion])
 def read_base_questions(
@@ -351,7 +448,7 @@ async def generate_questions(
     interview_id: int,
 ) -> Any:
     """
-    履歴書と職務経歴書から質問を生成
+    ���歴書と職務経歴書から質問を生成
     """
     interview = crud_interview.interview.get(db, id=interview_id)
     if not interview:
@@ -446,3 +543,14 @@ def update_interview_status_by_url(
         obj_in={"status": status_update.status}
     )
     return interview 
+
+@router.get("/{interview_id}/responses", response_model=List[InterviewResponse])
+def get_interview_responses(
+    interview_id: int,
+    db: Session = Depends(deps.get_db),
+) -> Any:
+    """面接の回答一覧を取得"""
+    interview = crud_interview.get(db, id=interview_id)
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    return interview.interview_responses 

@@ -89,9 +89,11 @@ class InterviewResponse(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     interview_id = Column(Integer, ForeignKey("interviews.id"))
-    question_id = Column(Integer)  # Can be either base_question_id or custom_question_id
+    question_id = Column(Integer)
+    question_text = Column(String)
+    answer_text = Column(String)
     question_type = Column(String)  # base or custom
-    response_text = Column(Text)
-    response_time = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     interview = relationship("Interview", back_populates="interview_responses") 

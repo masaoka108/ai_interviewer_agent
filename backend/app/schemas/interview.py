@@ -34,25 +34,22 @@ class CustomQuestion(QuestionInDBBase):
     interview_id: int
 
 class InterviewResponseBase(BaseModel):
+    interview_id: int
     question_id: int
-    question_type: str  # base or custom
-    response_text: str
+    question_text: str
+    answer_text: str
+    question_type: str
 
 class InterviewResponseCreate(InterviewResponseBase):
-    interview_id: int
-
-class InterviewResponseUpdate(InterviewResponseBase):
     pass
 
-class InterviewResponseInDBBase(InterviewResponseBase):
+class InterviewResponse(InterviewResponseBase):
     id: int
-    response_time: datetime
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
-
-class InterviewResponse(InterviewResponseInDBBase):
-    pass
 
 class InterviewBase(BaseModel):
     job_posting_id: int

@@ -50,13 +50,24 @@ class CRUDInterview(CRUDBase[Interview, InterviewCreate, InterviewUpdate]):
         return db_obj
 
     def add_response(
-        self, db: Session, *, obj_in: InterviewResponseCreate
+        self, db: Session, *, obj_in: dict
     ) -> InterviewResponse:
-        db_obj = InterviewResponse(**obj_in.dict())
-        db.add(db_obj)
-        db.commit()
-        db.refresh(db_obj)
-        return db_obj
+        """面接回答を追加"""
+        try:
+            db_obj = InterviewResponse(
+                interview_id=obj_in["interview_id"],
+                question_id=obj_in["question_id"],
+                question_text=obj_in["question_text"],
+                answer_text=obj_in["answer_text"],
+                question_type=obj_in["question_type"]
+            )
+            db.add(db_obj)
+            db.commit()
+            db.refresh(db_obj)
+            return db_obj
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Failed to save response: {str(e)}")
 
     def complete_interview(
         self,
@@ -118,7 +129,7 @@ class CRUDInterview(CRUDBase[Interview, InterviewCreate, InterviewUpdate]):
         return (
             db.query(InterviewResponse)
             .filter(InterviewResponse.interview_id == interview_id)
-            .order_by(InterviewResponse.response_time)
+            .order_by(InterviewResponse.created_at)
             .all()
         )
 
