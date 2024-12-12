@@ -40,7 +40,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
                 </svg>
               </button>
               <Link href="/" className="flex items-center ml-4">
-                <span className="text-xl font-bold text-white hover:text-indigo-100">AI面接官</span>
+                <span className="text-xl font-bold text-white hover:text-indigo-100">採用面接AIエージェント</span>
               </Link>
             </div>
 
@@ -164,7 +164,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
         <div className="max-w-7xl mx-auto py-6 px-4">
           <div className="text-center">
             <div className="text-sm font-medium opacity-90">
-              © 2024 AI面接官. All rights reserved.
+              © 2024 採用面接AIエージェント. All rights reserved.
             </div>
           </div>
         </div>

@@ -8,7 +8,7 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="AI Interviewer API",
-    description="AI面接官システムのバックエンドAPI",
+    description="採用面接AIエージェント システムのバックエンドAPI",
     version="1.0.0"
 )
 

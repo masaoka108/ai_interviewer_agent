@@ -12,7 +12,7 @@ export default function CandidateLayout({ children }: CandidateLayoutProps) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center">
-              <span className="text-white text-xl font-semibold">AI面接官</span>
+              <span className="text-white text-xl font-semibold">採用面接AIエージェント</span>
             </div>
             <div className="flex items-center space-x-4">
               <div className="text-white text-sm">
@@ -33,7 +33,7 @@ export default function CandidateLayout({ children }: CandidateLayoutProps) {
         <div className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
           <div className="text-center">
             <div className="text-sm">
-              <span className="opacity-75">© 2024 AI面接官. All rights reserved.</span>
+              <span className="opacity-75">© 2024 採用面接AIエージェント. All rights reserved.</span>
             </div>
           </div>
         </div>

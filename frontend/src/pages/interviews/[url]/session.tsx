@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import CandidateLayout from '@/components/layouts/CandidateLayout';
 import { apiClient } from '@/lib/apiClient';
@@ -39,6 +39,7 @@ export default function InterviewSession() {
   const [baseQuestions, setBaseQuestions] = useState<BaseQuestion[]>([]);
   const [customQuestions, setCustomQuestions] = useState<CustomQuestion[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [isBaseQuestion, setIsBaseQuestion] = useState(true);
   const [transcript, setTranscript] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -51,7 +52,6 @@ export default function InterviewSession() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [showStartButton, setShowStartButton] = useState(true);
   const [isRecognitionEnabled, setIsRecognitionEnabled] = useState(false);
@@ -66,6 +66,138 @@ export default function InterviewSession() {
   const [interimTranscript, setInterimTranscript] = useState('');
   const [isListening, setIsListening] = useState(false);
   const autoRestartRef = useRef(false);
+  const [hasSpokenInitialQuestion, setHasSpokenInitialQuestion] = useState(false);
+  const speechSynthesisRef = useRef<SpeechSynthesis | null>(null);
+
+  // 全ての質問を統合
+  const questions = useMemo(() => {
+    if (!baseQuestions || !customQuestions) return [];
+    
+    // ベース質問とカスタム質問を結合して、必要な形式に変換
+    const formattedBaseQuestions = baseQuestions.map(q => ({
+      id: q.id,
+      question: q.question_text,
+      type: 'base'
+    }));
+
+    const formattedCustomQuestions = customQuestions.map(q => ({
+      id: q.id,
+      question: q.question_text,
+      type: 'custom'
+    }));
+
+    return [...formattedBaseQuestions, ...formattedCustomQuestions];
+  }, [baseQuestions, customQuestions]);
+
+  // 音声読み上げ関数
+  const speak = useCallback((text: string, onEnd?: () => void) => {
+    if (!window.speechSynthesis) {
+      console.error('Speech synthesis not supported');
+      setError('音声合成に対応していません。');
+      return;
+    }
+
+    // 既に発話中の場合は中断
+    if (isSpeaking) {
+      console.log('Already speaking, cancelling current speech');
+      window.speechSynthesis.cancel();
+    }
+
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'ja-JP';
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+
+      utterance.onstart = () => {
+        console.log('Speech started:', text);
+        setIsSpeaking(true);
+      };
+
+      utterance.onend = () => {
+        console.log('Speech ended');
+        setIsSpeaking(false);
+        if (onEnd) {
+          setTimeout(() => {
+            onEnd();
+          }, 1000); // 1秒の遅延を追加
+        }
+      };
+
+      utterance.onerror = (event) => {
+        console.error('Speech synthesis error:', event);
+        setIsSpeaking(false);
+        setError('音声合成でエラーが発生しました。');
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error('Error in speak function:', error);
+      setIsSpeaking(false);
+      setError('音声合成でエラーが発生しました。');
+    }
+  }, [isSpeaking]);
+
+  // 次の質問へ進む関数
+  const handleNextQuestion = useCallback(async () => {
+    if (isSpeaking) {
+      console.log('Currently speaking, please wait');
+      return;
+    }
+
+    try {
+      // 音声認識を一時停止
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+
+      // 現在の回答をクリア
+      setTranscription('');
+      setInterimTranscript('');
+
+      // 次の質問のインデックスを設定
+      setCurrentQuestionIndex(prevIndex => {
+        const nextIndex = prevIndex + 1;
+        if (nextIndex < questions.length) {
+          const nextQuestion = questions[nextIndex].question;
+          speak(nextQuestion, () => {
+            // 読み上げ完了後に音声認識を再開
+            if (recognitionRef.current && isRecognitionEnabled) {
+              try {
+                recognitionRef.current.start();
+              } catch (error) {
+                console.error('Error restarting recognition:', error);
+              }
+            }
+          });
+          return nextIndex;
+        }
+        return prevIndex;
+      });
+    } catch (error) {
+      console.error('Error handling next question:', error);
+      setError('次の質問への移動中にエラーが発生しました。');
+    }
+  }, [questions, isRecognitionEnabled, speak, isSpeaking]);
+
+  // 初期質問の読み上げ
+  useEffect(() => {
+    if (questions.length > 0 && !hasSpokenInitialQuestion && !isSpeaking) {
+      console.log('Speaking initial question');
+      const currentQuestion = questions[currentQuestionIndex].question;
+      setHasSpokenInitialQuestion(true);
+      speak(currentQuestion, () => {
+        // 読み上げ完了後に音声認識を開始
+        if (recognitionRef.current && isRecognitionEnabled) {
+          try {
+            recognitionRef.current.start();
+          } catch (error) {
+            console.error('Error starting recognition:', error);
+          }
+        }
+      });
+    }
+  }, [questions, currentQuestionIndex, isSpeaking, isRecognitionEnabled, speak, hasSpokenInitialQuestion]);
 
   // 音声認識の結果を処理
   const handleSpeechResult = useCallback((event: SpeechRecognitionEvent) => {
@@ -235,7 +367,7 @@ export default function InterviewSession() {
       setShowPermissionDialog(true);
       setError('');
 
-      // デバイスの存在確認
+      // デバイスの存確認
       const devices = await navigator.mediaDevices.enumerateDevices();
       console.log('Available devices:', devices);
 
@@ -677,47 +809,6 @@ export default function InterviewSession() {
     }
   }, [error]);
 
-  // 質問の読み上げ
-  const speakQuestion = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) {
-      console.error('Speech synthesis not supported');
-      return;
-    }
-
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'ja-JP';
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      utterance.onstart = () => {
-        console.log('Speech started');
-        setIsSpeaking(true);
-        stopSpeechRecognition(); // 質問読み上げ中は音声認識を停止
-      };
-
-      utterance.onend = () => {
-        console.log('Speech ended');
-        setIsSpeaking(false);
-        startSpeechRecognition(); // 質問読み上げ終了後に音声認識を開始
-      };
-
-      utterance.onerror = (event) => {
-        console.error('Speech synthesis error:', event);
-        setIsSpeaking(false);
-        startSpeechRecognition();
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch (error) {
-      console.error('Error in speakQuestion:', error);
-      setError('音声合成でエラーが発生しました');
-      setIsSpeaking(false);
-      startSpeechRecognition();
-    }
-  }, [startSpeechRecognition, stopSpeechRecognition]);
-
   // 面接開始の処理
   const handleStartInterview = useCallback(async () => {
     try {
@@ -742,53 +833,14 @@ export default function InterviewSession() {
 
       // 最初の質問を読み上げる
       if (baseQuestions.length > 0) {
-        speakQuestion(baseQuestions[0].question_text);
+        speak(baseQuestions[0].question_text);
       }
     } catch (error) {
       console.error('Failed to start interview:', error);
       setError('面接の開始に失敗しました');
       setShowStartButton(true);
     }
-  }, [requestMediaPermissions, startCamera, startSpeechRecognition, baseQuestions, speakQuestion]);
-
-  // 次の質問へ
-  const handleNextQuestion = useCallback(async () => {
-    if (isBaseQuestion) {
-      if (currentQuestionIndex < baseQuestions.length - 1) {
-        setCurrentQuestionIndex(prev => prev + 1);
-        speakQuestion(baseQuestions[currentQuestionIndex + 1].question_text);
-      } else {
-        setIsBaseQuestion(false);
-        setCurrentQuestionIndex(0);
-        if (customQuestions.length > 0) {
-          speakQuestion(customQuestions[0].question_text);
-        }
-      }
-    } else {
-      if (currentQuestionIndex < customQuestions.length - 1) {
-        setCurrentQuestionIndex(prev => prev + 1);
-        speakQuestion(customQuestions[currentQuestionIndex + 1].question_text);
-      } else {
-        stopRecording();
-        try {
-          await apiClient.post(`/interviews/${interview?.id}/complete`);
-          router.push('/interviews');
-        } catch (error) {
-          console.error('Failed to complete interview:', error);
-          setError('面接の終了処理に失敗しました');
-        }
-      }
-    }
-  }, [
-    isBaseQuestion,
-    currentQuestionIndex,
-    baseQuestions,
-    customQuestions,
-    speakQuestion,
-    stopRecording,
-    interview?.id,
-    router
-  ]);
+  }, [requestMediaPermissions, startCamera, startSpeechRecognition, baseQuestions, speak]);
 
   if (error) {
     return (
@@ -961,13 +1013,11 @@ export default function InterviewSession() {
 
                   <div className="flex justify-end mt-4">
                     <button
-                      onClick={() => {
-                        setTranscription('');
-                        setInterimTranscript('');
-                      }}
-                      className="px-4 py-2 text-sm bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+                      onClick={handleNextQuestion}
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={isSpeaking || currentQuestionIndex >= questions.length - 1}
                     >
-                      回答をクリア
+                      {currentQuestionIndex >= questions.length - 1 ? '面接終了' : '次の質問へ'}
                     </button>
                   </div>
                 </div>
