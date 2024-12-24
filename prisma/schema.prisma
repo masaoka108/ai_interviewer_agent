@@ -1,0 +1,19 @@
+model InterviewResponse {
+  id            String    @id @default(cuid())
+  interviewId   String
+  questionId    Int
+  transcription String    @db.Text
+  aiResponse    String    @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  interview     Interview @relation(fields: [interviewId], references: [id])
+
+  @@index([interviewId])
+}
+
+// Interview モデルに関連を追加
+model Interview {
+  // ... 既存のフィールド
+  responses     InterviewResponse[]
+} 

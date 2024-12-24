@@ -45,6 +45,12 @@ const MEDIA_RECORDER_OPTIONS = {
   videoBitsPerSecond: 2500000, // 2.5 Mbps
 };
 
+// WebSocket接続用の型定義
+interface WebSocketMessage {
+  type: 'transcription' | 'response';
+  content: string;
+}
+
 export default function InterviewSession() {
   console.log('InterviewSession component rendering');
   const router = useRouter();
@@ -85,6 +91,9 @@ export default function InterviewSession() {
   const [isLastQuestionSpoken, setIsLastQuestionSpoken] = useState(false);
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [isStreamActive, setIsStreamActive] = useState(false);
+  const [aiResponse, setAiResponse] = useState<string>('');
+  const wsRef = useRef<WebSocket | null>(null);
+  const [isWebSocketConnected, setIsWebSocketConnected] = useState(false);
 
   // 全ての質問を統合
   const questions = useMemo(() => {
@@ -257,36 +266,74 @@ export default function InterviewSession() {
     }
   }, [baseQuestions, isSpeaking, isRecognitionEnabled, speak, hasSpokenInitialQuestion, isInitialized]);
 
-  // 音声認識の結果を処理
+  // 音声認識の結果をAIに送信する関数を修正
   const handleSpeechResult = useCallback((event: SpeechRecognitionEvent) => {
-    console.log('Speech recognition result received');
     const results = Array.from(event.results);
-    
-    // 最新の結果のみを処理
     const lastResult = results[results.length - 1];
+    
     if (lastResult.isFinal) {
       const finalText = lastResult[0].transcript;
-      console.log('Final transcript:', finalText);
-      // 最新の結果を追加（改行付き）
+      console.log('Final text:', finalText);
+      
       setTranscription(prev => {
-        // 空の場合は改行なしで追加
-        if (!prev) return finalText;
-        // 既に内容がある場合は改行を入れて追加
-        return `${prev}\n${finalText}`;
+        const newTranscription = prev ? `${prev}\n${finalText}` : finalText;
+        return newTranscription;
       });
       setInterimTranscript('');
+
+      // WebSocketを通じてAIに送信
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        const message = {
+          type: 'audio_data',
+          data: {
+            text: finalText,
+            questionId: currentQuestionIndex,
+            timestamp: Date.now(),
+            language: 'ja-JP'
+          }
+        };
+        console.log('Sending to AI:', message);
+        wsRef.current.send(JSON.stringify(message));
+      } else {
+        console.error('WebSocket not connected:', {
+          readyState: wsRef.current?.readyState,
+          isConnected: wsRef.current?.readyState === WebSocket.OPEN
+        });
+      }
     } else {
-      // 中間結果の更新
+      // 中間結果の処理
       const interimText = lastResult[0].transcript;
       setInterimTranscript(interimText);
+      
+      // 中間結果もリアルタイムで送信（オプション）
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        const message = {
+          type: 'interim_data',
+          data: {
+            text: interimText,
+            questionId: currentQuestionIndex,
+            timestamp: Date.now(),
+            language: 'ja-JP'
+          }
+        };
+        wsRef.current.send(JSON.stringify(message));
+      }
     }
-  }, []);
+  }, [currentQuestionIndex]);
 
   // 音声認識の開始
   const startSpeechRecognition = useCallback(() => {
     try {
+      // WebSocket接続状態を確認
+      console.log('\n=== Checking WebSocket Status ===');
+      console.log('WebSocket state:', {
+        exists: !!wsRef.current,
+        readyState: wsRef.current?.readyState,
+        isConnected: wsRef.current?.readyState === WebSocket.OPEN,
+      });
+
       if (!recognitionRef.current) {
-        console.log('Recognition not initialized');
+        console.error('Recognition not initialized');
         return;
       }
 
@@ -439,7 +486,7 @@ export default function InterviewSession() {
       await navigator.mediaDevices.getUserMedia({ audio: false, video: false })
         .catch(() => console.log('Resetting permissions...'));
 
-      // まずマイクの権限を要求
+      // まずマイクの権を要求
       console.log('Requesting microphone permission...');
       const audioStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -714,7 +761,7 @@ export default function InterviewSession() {
     }
   }, [url]);
 
-  // 音声合成の初期化を修正
+  // 音声合成の初期��を修正
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       // 音声合成の初期化を確認
@@ -732,10 +779,10 @@ export default function InterviewSession() {
         }
       };
 
-      // 初期化時に一度実行
+      // 初期化時に度実行
       initSpeechSynthesis();
 
-      // voiceschangedイベントのリスナーを設定
+      // voiceschangedイ���ントのリスナーを設定
       window.speechSynthesis.onvoiceschanged = initSpeechSynthesis;
 
       // クリーンアップ
@@ -883,7 +930,66 @@ export default function InterviewSession() {
     }
   }, [error]);
 
-  // 面接開始の処理を修正
+  // WebSocket接続を行う関数を修正
+  const connectWebSocket = useCallback(() => {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001';
+        console.log('Initializing WebSocket connection:', {
+          wsUrl,
+          interviewId: interview?.id,
+        });
+
+        // 既存の接続をクリーンアップ
+        if (wsRef.current) {
+          console.log('Cleaning up existing connection');
+          wsRef.current.close();
+          wsRef.current = null;
+        }
+
+        const ws = new WebSocket(`${wsUrl}/ws/interview?interviewId=${interview?.id}`);
+        console.log('WebSocket instance created');
+
+        // 接続タイムアウトの設定
+        const connectionTimeout = setTimeout(() => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            console.error('Connection timeout');
+            ws.close();
+            reject(new Error('Connection timeout'));
+          }
+        }, 5000);
+
+        ws.onopen = () => {
+          clearTimeout(connectionTimeout);
+          console.log('WebSocket connection established');
+          wsRef.current = ws;
+          resolve();
+        };
+
+        ws.onerror = (error) => {
+          clearTimeout(connectionTimeout);
+          console.error('WebSocket error:', error);
+          reject(error);
+        };
+
+        ws.onclose = (event) => {
+          clearTimeout(connectionTimeout);
+          console.log('WebSocket closed:', {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+          });
+          wsRef.current = null;
+        };
+
+      } catch (error) {
+        console.error('WebSocket initialization error:', error);
+        reject(error);
+      }
+    });
+  }, [interview?.id]);
+
+  // handleStartInterview は connectWebSocket の後に定義
   const handleStartInterview = useCallback(async () => {
     try {
       console.log('Starting interview...');
@@ -896,6 +1002,10 @@ export default function InterviewSession() {
         setShowStartButton(true);
         return;
       }
+
+      // WebSocket接続を確立
+      console.log('Establishing WebSocket connection...');
+      await connectWebSocket();
 
       // カメラの初期化を待機
       await startCamera();
@@ -932,7 +1042,7 @@ export default function InterviewSession() {
       setError('面接の開始に失敗しました: ' + error.message);
       setShowStartButton(true);
     }
-  }, [requestMediaPermissions, startCamera, startSpeechRecognition, baseQuestions, speak, isInitialized]);
+  }, [requestMediaPermissions, connectWebSocket, startCamera, startSpeechRecognition, baseQuestions, speak, isInitialized]);
 
   // 面接終了の処理を追加
   const handleFinishInterview = useCallback(async () => {
@@ -1117,6 +1227,18 @@ export default function InterviewSession() {
     }
   }, [currentQuestionIndex, baseQuestions, customQuestions]);
 
+  // AIの応答を表示するコンポーネントを追加
+  const AIResponseComponent = () => (
+    <div className="mt-4 bg-blue-50 p-4 rounded-lg">
+      <h4 className="text-lg font-medium text-gray-900 mb-2">
+        AI面接官の応答:
+      </h4>
+      <p className="text-gray-700 whitespace-pre-line">
+        {aiResponse}
+      </p>
+    </div>
+  );
+
   if (error) {
     return (
       <CandidateLayout>
@@ -1155,7 +1277,7 @@ export default function InterviewSession() {
                   <p className="text-sm text-yellow-700">
                     このブラウザでは音声認識機能が制限される可能性があります。
                     <a href="https://www.google.com/chrome/" target="_blank" rel="noopener noreferrer" className="font-medium underline text-yellow-700 hover:text-yellow-600">
-                      Chromeブラウザ
+                      Chromeラウザ
                     </a>
                     の使用を推奨ます。
                   </p>
@@ -1168,7 +1290,7 @@ export default function InterviewSession() {
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
               <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">
-                  カメラとマイクの許可が必です
+                  カメラとマイク��許可が必です
                 </h3>
                 <p className="text-gray-600 mb-4">
                   面接を開始するには、ブラウザカメラとマイクの使用を許可してください。
@@ -1281,6 +1403,9 @@ export default function InterviewSession() {
                       )}
                     </p>
                   </div>
+
+                  {/* AI応答の表示 */}
+                  {aiResponse && <AIResponseComponent />}
 
                   <div className="flex justify-end mt-4">
                     <button

@@ -31,44 +31,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const login = async (email: string, password: string): Promise<User> => {
+  const login = async (username: string, password: string): Promise<User> => {
     try {
-      console.log('Login attempt for:', email);
       const formData = new URLSearchParams();
-      formData.append('username', email);
+      formData.append('username', username);
       formData.append('password', password);
 
-      // トークン取得
-      const tokenResponse = await apiClient.post('/api/v1/login/access-token', formData, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      });
-      console.log('Token response:', tokenResponse.data);
+      const response = await apiClient.post('/api/v1/auth/login/access-token', formData);
+      const { access_token } = response.data;
       
-      if (!tokenResponse.data.access_token) {
-        console.error('No access token received');
-        throw new Error('認証に失敗しました');
-      }
-
-      const { access_token } = tokenResponse.data;
       localStorage.setItem('token', access_token);
       
-      // ユーザー情報取得
+      // ユーザー情報を取得
       const userResponse = await apiClient.get('/api/v1/users/me');
-      console.log('User data response:', userResponse.data);
-      
-      if (!userResponse.data) {
-        console.error('No user data received');
-        throw new Error('ユーザー情報の取得に失敗しました');
-      }
-
       const userData = userResponse.data;
+      console.log('User data:', userData);  // デバッグ用
+      
+      // ユーザー情報を保存
       saveUser(userData);
+      
       return userData;
     } catch (error) {
-      console.error('Login error:', error);
-      console.error('Error response:', error.response?.data);
+      console.error('Login failed:', error);
       throw error;
     }
   };

@@ -3,6 +3,7 @@ from typing import List
 import os
 
 class Settings(BaseSettings):
+    PROJECT_NAME: str = "Interviewer AI Agent"
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-123")
     ALGORITHM: str = "HS256"

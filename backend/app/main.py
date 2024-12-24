@@ -1,37 +1,51 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from app.api.v1.api import api_router
-from app.core.config import settings
 import os
 import logging
+import uvicorn
+
+from app.api.v1.api import api_router
+from app.core.config import settings
 
 # ロガーの設定
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
+    title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-# CORSミドルウェアの設定
+# CORS設定を追加
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Type"],
+    expose_headers=["*"]
 )
 
-# APIルーターをマウント
+# リクエストのログミドルウェア
+@app.middleware("http")
+async def log_requests(request, call_next):
+    logger.info(f"Incoming request: {request.method} {request.url}")
+    logger.info(f"Headers: {request.headers}")
+    response = await call_next(request)
+    logger.info(f"Response status: {response.status_code}")
+    return response
+
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
-# 静的ファイルのマウント
-RECORDINGS_DIR = "/app/recordings"
-if not os.path.exists(RECORDINGS_DIR):
-    os.makedirs(RECORDINGS_DIR, mode=0o755, exist_ok=True)
-    logger.info(f"Created recordings directory: {RECORDINGS_DIR}")
-
-app.mount("/recordings", StaticFiles(directory=RECORDINGS_DIR), name="recordings")
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
   

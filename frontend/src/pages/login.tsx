@@ -24,7 +24,7 @@ export default function Login() {
       }
       
       router.push('/job-postings');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Login error:', error);
       if (error.response?.status === 400) {
         setError('メールアドレスまたはパスワードが正しくありません');

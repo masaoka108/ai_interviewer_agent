@@ -15,7 +15,7 @@ export default function JobPostings() {
   useEffect(() => {
     const fetchJobPostings = async () => {
       try {
-        const response = await apiClient.get('/api/v1/job-postings/');
+        const response = await apiClient.get('/api/v1/job-postings');
         setJobPostings(response.data);
       } catch (error) {
         console.error('Failed to fetch job postings:', error);

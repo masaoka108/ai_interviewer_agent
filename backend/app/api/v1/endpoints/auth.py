@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -11,6 +12,9 @@ from app.core.security import get_password_hash
 from app.crud import crud_user
 from app.schemas.user import User, Token
 
+# ロガーの設定
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 @router.post("/login/access-token", response_model=Token)
@@ -21,25 +25,27 @@ def login_access_token(
     """
     OAuth2 compatible token login, get an access token for future requests
     """
-    print(f"Login attempt for user: {form_data.username}")
-    user = crud_user.user.authenticate(
-        db, email=form_data.username, password=form_data.password
-    )
-    if not user:
-        print(f"Authentication failed for user: {form_data.username}")
-        raise HTTPException(status_code=400, detail="メールアドレスまたはパスワードが正しくありません")
-    elif not crud_user.user.is_active(user):
-        print(f"Inactive user: {form_data.username}")
-        raise HTTPException(status_code=400, detail="アカウントが無効です")
-    
-    print(f"Login successful for user: {form_data.username}")
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    return {
-        "access_token": security.create_access_token(
-            user.id, expires_delta=access_token_expires
-        ),
-        "token_type": "bearer",
-    }
+    logger.info(f"Login attempt for user: {form_data.username}")
+    try:
+        user = crud_user.user.authenticate(
+            db, email=form_data.username, password=form_data.password
+        )
+        if not user:
+            logger.error(f"Authentication failed for user: {form_data.username}")
+            raise HTTPException(status_code=400, detail="Incorrect email or password")
+        elif not crud_user.user.is_active(user):
+            logger.error(f"Inactive user attempted login: {form_data.username}")
+            raise HTTPException(status_code=400, detail="Inactive user")
+        
+        access_token = security.create_access_token(user.id)
+        logger.info(f"Login successful for user: {form_data.username}")
+        return {
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
+    except Exception as e:
+        logger.error(f"Login failed for user {form_data.username}: {str(e)}")
+        raise
 
 @router.post("/test-token", response_model=User)
 def test_token(current_user: User = Depends(deps.get_current_user)) -> Any:

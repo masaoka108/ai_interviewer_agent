@@ -11,7 +11,7 @@ class UserBase(BaseModel):
 
     class Config:
         from_attributes = True
-        alias_generator = lambda x: ''.join(word.capitalize() if i > 0 else word for i, word in enumerate(x.split('_')))
+        alias_generator = lambda x: ''.join(word.capitalize() if i > 0 else word.lower() for i, word in enumerate(x.split('_')))
         populate_by_name = True
 
 class UserCreate(UserBase):
