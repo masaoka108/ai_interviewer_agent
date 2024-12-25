@@ -642,7 +642,7 @@ export default function InterviewSession() {
   const fetchInterview = async () => {
     try {
       const response = await apiClient.get<InterviewData>(`/interviews/by-url/${url}`);
-      // setInterview(response.data);
+      setInterview(response.data);
       
       // const [baseResponse, customResponse] = await Promise.all([
       //   apiClient.get<BaseQuestion[]>(`/interviews/${response.data.id}/base-questions`),
@@ -1215,7 +1215,7 @@ export default function InterviewSession() {
           ) : (
             <>
               <div className="grid grid-cols-2 gap-8 mb-8">
-                <div className="bg-white rounded-lg shadow-lg p-6 aspect-video relative flex items-center justify-center">
+                <div className="bg-white rounded-lg shadow-lg aspect-video relative flex items-center justify-center">
                   {interview && (
                     <div className="relative w-full h-full flex items-center justify-center">
                       <img

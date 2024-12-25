@@ -27,7 +27,7 @@ async def get_realtime_token():
                 },
                 json={
                     "model": "gpt-4o-realtime-preview-2024-12-17",
-                    "voice": "coral",
+                    "voice": "shimmer", # alloy, ash, ballad, coral, echo sage, shimmer and verse
                 }
             )
             return response.json()
