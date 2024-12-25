@@ -38,12 +38,6 @@ export default function InterviewSession() {
   const router = useRouter();
   const { url } = router.query;
   const [interview, setInterview] = useState<InterviewData | null>(null);
-  // const [baseQuestions, setBaseQuestions] = useState<BaseQuestion[]>([]);
-  // const [customQuestions, setCustomQuestions] = useState<CustomQuestion[]>([]);
-  // const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  // const [isSpeaking, setIsSpeaking] = useState(false);
-  // const [isBaseQuestion, setIsBaseQuestion] = useState(true);
-  // const [transcript, setTranscript] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState('');
   const [showPermissionDialog, setShowPermissionDialog] = useState(false);
@@ -57,10 +51,6 @@ export default function InterviewSession() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [showStartButton, setShowStartButton] = useState(true);
   const [isRecognitionEnabled, setIsRecognitionEnabled] = useState(false);
-  // const [retryCount, setRetryCount] = useState(0);
-  // const [isRecognitionPaused, setIsRecognitionPaused] = useState(false);
-  // const MAX_RETRY_COUNT = 3;
-  // const RETRY_DELAY = 2000;
   const [browserSupported, setBrowserSupported] = useState(true);
   const [isVideoElementMounted, setIsVideoElementMounted] = useState(false);
   const [isVideoMounted, setIsVideoMounted] = useState(false);
@@ -68,10 +58,10 @@ export default function InterviewSession() {
   const [interimTranscript, setInterimTranscript] = useState('');
   const [isListening, setIsListening] = useState(false);
   const autoRestartRef = useRef(false);
-  const [hasSpokenInitialQuestion, setHasSpokenInitialQuestion] = useState(false);
-  const speechSynthesisRef = useRef<SpeechSynthesis | null>(null);
-  const [isLastQuestionSpoken, setIsLastQuestionSpoken] = useState(false);
-  const [answers, setAnswers] = useState<Answer[]>([]);
+  const [hasSpokenInitialQuestion] = useState(false);
+  // const speechSynthesisRef = useRef<SpeechSynthesis | null>(null);
+  // const [isLastQuestionSpoken, setIsLastQuestionSpoken] = useState(false);
+  const [answers] = useState<Answer[]>([]);
   const [isStreamActive, setIsStreamActive] = useState(false);
   const [aiResponse, setAiResponse] = useState<string>('');
   const wsRef = useRef<WebSocket | null>(null);
@@ -87,12 +77,6 @@ export default function InterviewSession() {
     try {
       // トークンの取得
       const tokenResponse = await apiClient.get("/openai/token");
-      console.log('Token Response:', {
-        status: tokenResponse.status,
-        data: tokenResponse.data,
-        clientSecret: tokenResponse.data?.client_secret?.value,
-        headers: tokenResponse.headers
-      });
       const EPHEMERAL_KEY = tokenResponse.data.client_secret.value;
 
       // RTCPeerConnectionの作成
@@ -124,6 +108,39 @@ export default function InterviewSession() {
         if (data.type === "text") {
           setAiResponse(prev => prev + data.content);
         }
+      };
+
+      // 初期設定メッセージの送信
+      dc.onopen = () => {
+        // セッション更新メッセージを送信
+        const sessionUpdate = {
+          type: "session.update",
+          session: {
+            instructions: `
+あなたはIT企業の採用面接官です。以下の指示に従って面接を進めてください：
+
+1. 面接の進め方：
+- 最初に自己紹介を求めてください
+- 質問は1つずつ行い、回答を十分に聞いてから次の質問に進んでください
+- 回答に対して適切なフォローアップ質問をしてください
+- 面接官らしい丁寧な言葉遣いを心がけてください
+
+2. 主な質問項目：
+- PM経験の年数
+- これまで担当したプロジェクトの規模や業界
+- チーム管理やステークホルダーとのコミュニケーションについて
+- 困難な状況での問題解決例
+- プロジェクト管理手法について
+
+3. 注意事項：
+- 面接の文脈に関係のない会話は避けてください
+- 面接官としての立場を常に維持してください
+- 具体的な例を求めながら、候補者の経験を深く理解するよう努めてください
+`,
+            modalities: ["audio", "text"]
+          }
+        };
+        dc.send(JSON.stringify(sessionUpdate));
       };
 
       // SDPオファーの作成と送信
@@ -176,7 +193,7 @@ export default function InterviewSession() {
       type: "response.create",
       response: {
         modalities: ["audio", "text"],
-        instructions: "あなたはPM（プロジェクトマネージャー）を採用するための面接官です。面接を進めてください。",
+        instructions: "あなたはPM（プロジェクトマネージャー）を採用するための面接官です。日本語で面接を進めてください。",
       },
     }));
   }
@@ -437,14 +454,14 @@ export default function InterviewSession() {
     }
   }, []);
 
-  // 音声認識の制御
-  const toggleSpeechRecognition = useCallback(() => {
-    if (isListening) {
-      stopSpeechRecognition();
-    } else {
-      startSpeechRecognition();
-    }
-  }, [isListening, startSpeechRecognition, stopSpeechRecognition]);
+  // // 音声認識の制御
+  // const toggleSpeechRecognition = useCallback(() => {
+  //   if (isListening) {
+  //     stopSpeechRecognition();
+  //   } else {
+  //     startSpeechRecognition();
+  //   }
+  // }, [isListening, startSpeechRecognition, stopSpeechRecognition]);
 
   // ビデオ要素のマウント状態を監視
   useEffect(() => {
@@ -607,7 +624,7 @@ export default function InterviewSession() {
       
       if (isBrave) {
         console.log('Brave browser detected');
-        setError('Braveブラウザでは音声認識機能が制限される可能性があります。Chromeブラウザの使用を推奨します。');
+        setError('Braveブラウザでは音声認識機能���制限���れる可能性があります。Chromeブラウザの使用を推奨します。');
         setBrowserSupported(false);
       } else if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
         console.log('Speech recognition not supported');

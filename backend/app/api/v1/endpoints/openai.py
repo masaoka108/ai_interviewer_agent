@@ -27,7 +27,7 @@ async def get_realtime_token():
                 },
                 json={
                     "model": "gpt-4o-realtime-preview-2024-12-17",
-                    "voice": "verse",
+                    "voice": "coral",
                 }
             )
             return response.json()
@@ -37,18 +37,18 @@ async def get_realtime_token():
             detail=f"OpenAI Realtime APIとの通信中にエラーが発生しました: {str(e)}"
         )
 
-@router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocketエンドポイント
-    """
-    await websocket.accept()
-    try:
-        while True:
-            # クライアントからのメッセージを待機
-            data = await websocket.receive_text()
-            # メッセージの処理とレスポンスの送信
-            await websocket.send_text(f"Message received: {data}")
-    except Exception as e:
-        await websocket.close()
-        print(f"WebSocket error: {str(e)}") 
+# @router.websocket("/ws")
+# async def websocket_endpoint(websocket: WebSocket):
+#     """
+#     WebSocketエンドポイント
+#     """
+#     await websocket.accept()
+#     try:
+#         while True:
+#             # クライアントからのメッセージを待機
+#             data = await websocket.receive_text()
+#             # メッセージの処理とレスポンスの送信
+#             await websocket.send_text(f"Message received: {data}")
+#     except Exception as e:
+#         await websocket.close()
+#         print(f"WebSocket error: {str(e)}") 
