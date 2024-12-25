@@ -3,24 +3,12 @@ import { useRouter } from 'next/router';
 import CandidateLayout from '@/components/layouts/CandidateLayout';
 import { apiClient } from '@/lib/apiClient';
 import { InterviewData, CustomQuestion, BaseQuestion } from '@/types';
-import Image from 'next/image';
+// import Image from 'next/image';
 
 // 型定義を追加
 interface Window {
   SpeechRecognition?: new () => SpeechRecognition;
   webkitSpeechRecognition?: new () => SpeechRecognition;
-}
-
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onstart: (event: Event) => void;
-  onend: (event: Event) => void;
-  onerror: (event: SpeechRecognitionErrorEvent) => void;
-  onresult: (event: SpeechRecognitionEvent) => void;
-  start: () => void;
-  stop: () => void;
 }
 
 interface SpeechRecognitionErrorEvent extends Event {
@@ -45,23 +33,17 @@ const MEDIA_RECORDER_OPTIONS = {
   videoBitsPerSecond: 2500000, // 2.5 Mbps
 };
 
-// WebSocket接続用の型定義
-interface WebSocketMessage {
-  type: 'transcription' | 'response';
-  content: string;
-}
-
 export default function InterviewSession() {
   console.log('InterviewSession component rendering');
   const router = useRouter();
   const { url } = router.query;
   const [interview, setInterview] = useState<InterviewData | null>(null);
-  const [baseQuestions, setBaseQuestions] = useState<BaseQuestion[]>([]);
-  const [customQuestions, setCustomQuestions] = useState<CustomQuestion[]>([]);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isBaseQuestion, setIsBaseQuestion] = useState(true);
-  const [transcript, setTranscript] = useState('');
+  // const [baseQuestions, setBaseQuestions] = useState<BaseQuestion[]>([]);
+  // const [customQuestions, setCustomQuestions] = useState<CustomQuestion[]>([]);
+  // const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  // const [isSpeaking, setIsSpeaking] = useState(false);
+  // const [isBaseQuestion, setIsBaseQuestion] = useState(true);
+  // const [transcript, setTranscript] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState('');
   const [showPermissionDialog, setShowPermissionDialog] = useState(false);
@@ -75,10 +57,10 @@ export default function InterviewSession() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [showStartButton, setShowStartButton] = useState(true);
   const [isRecognitionEnabled, setIsRecognitionEnabled] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const [isRecognitionPaused, setIsRecognitionPaused] = useState(false);
-  const MAX_RETRY_COUNT = 3;
-  const RETRY_DELAY = 2000;
+  // const [retryCount, setRetryCount] = useState(0);
+  // const [isRecognitionPaused, setIsRecognitionPaused] = useState(false);
+  // const MAX_RETRY_COUNT = 3;
+  // const RETRY_DELAY = 2000;
   const [browserSupported, setBrowserSupported] = useState(true);
   const [isVideoElementMounted, setIsVideoElementMounted] = useState(false);
   const [isVideoMounted, setIsVideoMounted] = useState(false);
@@ -95,176 +77,116 @@ export default function InterviewSession() {
   const wsRef = useRef<WebSocket | null>(null);
   const [isWebSocketConnected, setIsWebSocketConnected] = useState(false);
 
-  // 全ての質問を統合
-  const questions = useMemo(() => {
-    if (!baseQuestions || !customQuestions) return [];
-    
-    // ベース質問とカスタム質問を結合して、必要な形式に変換
-    const formattedBaseQuestions = baseQuestions.map(q => ({
-      id: q.id,
-      question: q.question_text,
-      type: 'base'
-    }));
+  // WebRTC関連の状態を追加
+  const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
+  const peerConnection = useRef<RTCPeerConnection | null>(null);
+  const audioElement = useRef<HTMLAudioElement | null>(null);
 
-    const formattedCustomQuestions = customQuestions.map(q => ({
-      id: q.id,
-      question: q.question_text,
-      type: 'custom'
-    }));
-
-    return [...formattedBaseQuestions, ...formattedCustomQuestions];
-  }, [baseQuestions, customQuestions]);
-
-  // 音声読み上げ関数を修正
-  const speak = useCallback((text: string, onEnd?: () => void) => {
-    if (!window.speechSynthesis) {
-      console.error('Speech synthesis not supported');
-      setError('音声合成に対応していません。');
-      return;
-    }
-
-    // 既存の発話をキャンセル
-    window.speechSynthesis.cancel();
-
+  // WebRTC接続を開始する関数
+  async function startRealTimeSession() {
     try {
-      console.log('Starting speech synthesis for:', text);
-      const utterance = new SpeechSynthesisUtterance(text);
-      
-      // 日本語の音声を探す
-      const voices = window.speechSynthesis.getVoices();
-      const jaVoice = voices.find(voice => voice.lang === 'ja-JP');
-      if (jaVoice) {
-        utterance.voice = jaVoice;
-      }
-
-      utterance.lang = 'ja-JP';
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
-
-      utterance.onstart = () => {
-        console.log('Speech started:', text);
-        setIsSpeaking(true);
-      };
-
-      utterance.onend = () => {
-        console.log('Speech ended');
-        setIsSpeaking(false);
-        if (currentQuestionIndex === baseQuestions.length + customQuestions.length - 1) {
-          setIsLastQuestionSpoken(true);
-        }
-        if (onEnd) {
-          onEnd();
-        }
-      };
-
-      utterance.onerror = (event) => {
-        console.error('Speech synthesis error:', event);
-        setIsSpeaking(false);
-        setError('音声合成でエラーが発生しました。');
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch (error) {
-      console.error('Error in speak function:', error);
-      setIsSpeaking(false);
-      setError('音声合成でエラーが発生しました。');
-    }
-  }, [isSpeaking, currentQuestionIndex, baseQuestions.length, customQuestions.length]);
-
-  // 次の質問へ進む関数
-  const handleNextQuestion = useCallback(async () => {
-    if (isSpeaking) {
-      console.log('Currently speaking, please wait');
-      return;
-    }
-
-    try {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-
-      // 現在の質問と回答を保存
-      const currentQuestionData = currentQuestionIndex < baseQuestions.length
-        ? {
-            id: baseQuestions[currentQuestionIndex].id,
-            text: baseQuestions[currentQuestionIndex].question_text,
-            type: 'base' as const
-          }
-        : {
-            id: customQuestions[currentQuestionIndex - baseQuestions.length].id,
-            text: customQuestions[currentQuestionIndex - baseQuestions.length].question_text,
-            type: 'custom' as const
-          };
-
-      setAnswers(prev => [...prev, {
-        question_id: currentQuestionData.id,
-        question_text: currentQuestionData.text,
-        answer_text: transcription,
-        question_type: currentQuestionData.type
-      }]);
-
-      setTranscription('');
-      setInterimTranscript('');
-
-      setCurrentQuestionIndex(prevIndex => {
-        const nextIndex = prevIndex + 1;
-        const totalQuestions = (baseQuestions?.length || 0) + (customQuestions?.length || 0);
-        
-        if (nextIndex < totalQuestions) {
-          let nextQuestionText = '';
-          if (nextIndex < (baseQuestions?.length || 0)) {
-            nextQuestionText = baseQuestions[nextIndex]?.question_text || '';
-          } else {
-            const customIndex = nextIndex - (baseQuestions?.length || 0);
-            nextQuestionText = customQuestions[customIndex]?.question_text || '';
-          }
-          
-          if (nextQuestionText) {
-            speak(nextQuestionText, () => {
-              if (nextIndex === totalQuestions - 1) {
-                setIsLastQuestionSpoken(true);
-              }
-              if (recognitionRef.current && isRecognitionEnabled) {
-                try {
-                  recognitionRef.current.start();
-                } catch (error) {
-                  console.error('Error restarting recognition:', error);
-                }
-              }
-            });
-          }
-        }
-        return nextIndex;
+      // トークンの取得
+      const tokenResponse = await apiClient.get("/openai/token");
+      console.log('Token Response:', {
+        status: tokenResponse.status,
+        data: tokenResponse.data,
+        clientSecret: tokenResponse.data?.client_secret?.value,
+        headers: tokenResponse.headers
       });
-    } catch (error) {
-      console.error('Error handling next question:', error);
-      setError('次の質問への移動中にエラーが発生しました。');
-    }
-  }, [baseQuestions, customQuestions, currentQuestionIndex, transcription, isRecognitionEnabled, speak, isSpeaking]);
+      const EPHEMERAL_KEY = tokenResponse.data.client_secret.value;
 
+      // RTCPeerConnectionの作成
+      const pc = new RTCPeerConnection();
+      peerConnection.current = pc;
+
+      // 音声出力の設定
+      audioElement.current = document.createElement("audio");
+      audioElement.current.autoplay = true;
+      pc.ontrack = (e) => {
+        if (audioElement.current) {
+          audioElement.current.srcObject = e.streams[0];
+        }
+      };
+
+      // マイク入力の追加
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      pc.addTrack(stream.getTracks()[0]);
+
+      // データチャンネルの設定
+      const dc = pc.createDataChannel("oai-events");
+      setDataChannel(dc);
+
+      // イベントリスナーの設定
+      dc.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === "text") {
+          setAiResponse(prev => prev + data.content);
+        }
+      };
+
+      // SDPオファーの作成と送信
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      const response = await fetch("https://api.openai.com/v1/realtime", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${EPHEMERAL_KEY}`,
+          "Content-Type": "application/sdp",
+        },
+        body: offer.sdp,
+      });
+
+      const answer = {
+        type: "answer",
+        sdp: await response.text(),
+      };
+      await pc.setRemoteDescription(answer);
+    } catch (error) {
+      console.error("Failed to start realtime session:", error);
+      setError("リアルタイムセッションの開始に失敗しました");
+    }
+  }
+
+  // メッセージ送信関数
+  function sendMessage(message: string) {
+    if (!dataChannel) {
+      console.error("No data channel available");
+      return;
+    }
+
+    const event = {
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: message,
+          },
+        ],
+      },
+    };
+
+    dataChannel.send(JSON.stringify(event));
+    dataChannel.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        modalities: ["audio", "text"],
+        instructions: "あなたはPM（プロジェクトマネージャー）を採用するための面接官です。面接を進めてください。",
+      },
+    }));
+  }
+
+  
   // 初期質問の読み上げを修正
   useEffect(() => {
-    if (baseQuestions?.length > 0 && !hasSpokenInitialQuestion && !isSpeaking && isInitialized) {
-      console.log('Speaking initial question');
-      const initialQuestion = baseQuestions[0]?.question_text;
-      if (initialQuestion) {
-        setHasSpokenInitialQuestion(true);
-        // 少し遅延を入れて確実に音声合成を初期化
-        setTimeout(() => {
-          speak(initialQuestion, () => {
-            if (recognitionRef.current && isRecognitionEnabled) {
-              try {
-                recognitionRef.current.start();
-              } catch (error) {
-                console.error('Error starting recognition:', error);
-              }
-            }
-          });
-        }, 1000);
-      }
-    }
-  }, [baseQuestions, isSpeaking, isRecognitionEnabled, speak, hasSpokenInitialQuestion, isInitialized]);
+     // コンポーネントの初回マウント時に実行される
+
+  }, [isRecognitionEnabled, hasSpokenInitialQuestion, isInitialized]);
 
   // 音声認識の結果をAIに送信する関数を修正
   const handleSpeechResult = useCallback((event: SpeechRecognitionEvent) => {
@@ -273,53 +195,17 @@ export default function InterviewSession() {
     
     if (lastResult.isFinal) {
       const finalText = lastResult[0].transcript;
-      console.log('Final text:', finalText);
-      
       setTranscription(prev => {
         const newTranscription = prev ? `${prev}\n${finalText}` : finalText;
+        // 最終的な文章をOpenAIに送信
+        sendMessage(finalText);
         return newTranscription;
       });
       setInterimTranscript('');
-
-      // WebSocketを通じてAIに送信
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        const message = {
-          type: 'audio_data',
-          data: {
-            text: finalText,
-            questionId: currentQuestionIndex,
-            timestamp: Date.now(),
-            language: 'ja-JP'
-          }
-        };
-        console.log('Sending to AI:', message);
-        wsRef.current.send(JSON.stringify(message));
-      } else {
-        console.error('WebSocket not connected:', {
-          readyState: wsRef.current?.readyState,
-          isConnected: wsRef.current?.readyState === WebSocket.OPEN
-        });
-      }
     } else {
-      // 中間結果の処理
-      const interimText = lastResult[0].transcript;
-      setInterimTranscript(interimText);
-      
-      // 中間結果もリアルタイムで送信（オプション）
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        const message = {
-          type: 'interim_data',
-          data: {
-            text: interimText,
-            questionId: currentQuestionIndex,
-            timestamp: Date.now(),
-            language: 'ja-JP'
-          }
-        };
-        wsRef.current.send(JSON.stringify(message));
-      }
+      setInterimTranscript(lastResult[0].transcript);
     }
-  }, [currentQuestionIndex]);
+  }, []);
 
   // 音声認識の開始
   const startSpeechRecognition = useCallback(() => {
@@ -739,15 +625,15 @@ export default function InterviewSession() {
   const fetchInterview = async () => {
     try {
       const response = await apiClient.get<InterviewData>(`/interviews/by-url/${url}`);
-      setInterview(response.data);
+      // setInterview(response.data);
       
-      const [baseResponse, customResponse] = await Promise.all([
-        apiClient.get<BaseQuestion[]>(`/interviews/${response.data.id}/base-questions`),
-        apiClient.get<CustomQuestion[]>(`/interviews/${response.data.id}/custom-questions`)
-      ]);
+      // const [baseResponse, customResponse] = await Promise.all([
+      //   apiClient.get<BaseQuestion[]>(`/interviews/${response.data.id}/base-questions`),
+      //   apiClient.get<CustomQuestion[]>(`/interviews/${response.data.id}/custom-questions`)
+      // ]);
       
-      setBaseQuestions(baseResponse.data);
-      setCustomQuestions(customResponse.data);
+      // setBaseQuestions(baseResponse.data);
+      // setCustomQuestions(customResponse.data);
     } catch (error) {
       console.error('Error in fetchInterview:', error);
       setError('面接情報の取得に失敗しました');
@@ -761,7 +647,7 @@ export default function InterviewSession() {
     }
   }, [url]);
 
-  // 音声合成の初期��を修正
+  // 音声合成の初期化を修正
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       // 音声合成の初期化を確認
@@ -782,7 +668,7 @@ export default function InterviewSession() {
       // 初期化時に度実行
       initSpeechSynthesis();
 
-      // voiceschangedイ���ントのリスナーを設定
+      // voiceschangedイベントのリスナーを設定
       window.speechSynthesis.onvoiceschanged = initSpeechSynthesis;
 
       // クリーンアップ
@@ -987,62 +873,36 @@ export default function InterviewSession() {
         reject(error);
       }
     });
-  }, [interview?.id]);
+  // }, [interview?.id]);
+  });
 
   // handleStartInterview は connectWebSocket の後に定義
   const handleStartInterview = useCallback(async () => {
     try {
-      console.log('Starting interview...');
       setShowStartButton(false);
-
+      
       // メディア権限の要求
       const granted = await requestMediaPermissions();
       if (!granted) {
-        console.error('Media permissions not granted');
         setShowStartButton(true);
         return;
       }
 
-      // WebSocket接続を確立
-      console.log('Establishing WebSocket connection...');
-      await connectWebSocket();
+      // リアルタイムセッションの開始
+      await startRealTimeSession();
 
-      // カメラの初期化を待機
+      // カメラの初期化
       await startCamera();
-      
-      // ストリームの状態を確認
-      if (!mediaStreamRef.current?.active) {
-        throw new Error('Failed to initialize media stream');
-      }
 
       // 音声認識の開始
       await startSpeechRecognition();
 
-      // 音声合成が初期化されているか確認
-      if (!isInitialized) {
-        await new Promise<void>((resolve) => {
-          const checkInit = () => {
-            if (isInitialized) {
-              resolve();
-            } else {
-              setTimeout(checkInit, 100);
-            }
-          };
-          checkInit();
-        });
-      }
-
-      // 最初の質問を読み上げる
-      if (baseQuestions.length > 0) {
-        console.log('Reading first question:', baseQuestions[0].question_text);
-        speak(baseQuestions[0].question_text);
-      }
     } catch (error) {
       console.error('Failed to start interview:', error);
       setError('面接の開始に失敗しました: ' + error.message);
       setShowStartButton(true);
     }
-  }, [requestMediaPermissions, connectWebSocket, startCamera, startSpeechRecognition, baseQuestions, speak, isInitialized]);
+  }, [requestMediaPermissions, startRealTimeSession, startCamera, startSpeechRecognition]);
 
   // 面接終了の処理を追加
   const handleFinishInterview = useCallback(async () => {
@@ -1177,55 +1037,55 @@ export default function InterviewSession() {
         setError(`リクエストの設定中にエラーが発生しました: ${error.message}`);
       }
     }
-  }, [interview, answers, transcription, currentQuestionIndex, baseQuestions, customQuestions, router]);
+  }, [answers, transcription, router]);
 
-  // 質問の表示部分を修正
-  const currentQuestion = useMemo(() => {
-    // 質問データが読み込まれていない場合のガード
-    if (!baseQuestions?.length || !customQuestions?.length) {
-      return {
-        text: '',
-        type: 'ベース質問',
-        current: 0,
-        total: 0
-      };
-    }
+  // // 質問の表示部分を修正
+  // const currentQuestion = useMemo(() => {
+  //   // 質問データが読み込まれていない場合のガード
+  //   if (!baseQuestions?.length || !customQuestions?.length) {
+  //     return {
+  //       text: '',
+  //       type: 'ベース質問',
+  //       current: 0,
+  //       total: 0
+  //     };
+  //   }
 
-    if (currentQuestionIndex < baseQuestions.length) {
-      // ベース質問の範囲内のチェック
-      if (!baseQuestions[currentQuestionIndex]) {
-        return {
-          text: '',
-          type: 'ベース質問',
-          current: currentQuestionIndex + 1,
-          total: baseQuestions.length
-        };
-      }
-      return {
-        text: baseQuestions[currentQuestionIndex].question_text,
-        type: 'ベース質問',
-        current: currentQuestionIndex + 1,
-        total: baseQuestions.length
-      };
-    } else {
-      const customIndex = currentQuestionIndex - baseQuestions.length;
-      // カスタム質問の範囲内のチェック
-      if (!customQuestions[customIndex]) {
-        return {
-          text: '',
-          type: 'カスタマイズ質問',
-          current: customIndex + 1,
-          total: customQuestions.length
-        };
-      }
-      return {
-        text: customQuestions[customIndex].question_text,
-        type: 'カスタマイズ質問',
-        current: customIndex + 1,
-        total: customQuestions.length
-      };
-    }
-  }, [currentQuestionIndex, baseQuestions, customQuestions]);
+  //   if (currentQuestionIndex < baseQuestions.length) {
+  //     // ベース質問の範囲内のチェック
+  //     if (!baseQuestions[currentQuestionIndex]) {
+  //       return {
+  //         text: '',
+  //         type: 'ベース質問',
+  //         current: currentQuestionIndex + 1,
+  //         total: baseQuestions.length
+  //       };
+  //     }
+  //     return {
+  //       text: baseQuestions[currentQuestionIndex].question_text,
+  //       type: 'ベース質問',
+  //       current: currentQuestionIndex + 1,
+  //       total: baseQuestions.length
+  //     };
+  //   } else {
+  //     const customIndex = currentQuestionIndex - baseQuestions.length;
+  //     // カスタム質問の範囲内のチェック
+  //     if (!customQuestions[customIndex]) {
+  //       return {
+  //         text: '',
+  //         type: 'カスタマイズ質問',
+  //         current: customIndex + 1,
+  //         total: customQuestions.length
+  //       };
+  //     }
+  //     return {
+  //       text: customQuestions[customIndex].question_text,
+  //       type: 'カスタマイズ質問',
+  //       current: customIndex + 1,
+  //       total: customQuestions.length
+  //     };
+  //   }
+  // }, [currentQuestionIndex, baseQuestions, customQuestions]);
 
   // AIの応答を表示するコンポーネントを追加
   const AIResponseComponent = () => (
@@ -1251,15 +1111,15 @@ export default function InterviewSession() {
     );
   }
 
-  if (!interview || !baseQuestions?.length || !customQuestions?.length) {
-    return (
-      <CandidateLayout>
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="text-gray-600">読み込み中...</div>
-        </div>
-      </CandidateLayout>
-    );
-  }
+  // if (!interview || !baseQuestions?.length || !customQuestions?.length) {
+  //   return (
+  //     <CandidateLayout>
+  //       <div className="flex items-center justify-center min-h-screen">
+  //         <div className="text-gray-600">読み込み中...</div>
+  //       </div>
+  //     </CandidateLayout>
+  //   );
+  // }
 
   return (
     <CandidateLayout>
@@ -1290,7 +1150,7 @@ export default function InterviewSession() {
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
               <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">
-                  カメラとマイク��許可が必です
+                  カメラとマイクの使用許可が必です
                 </h3>
                 <p className="text-gray-600 mb-4">
                   面接を開始するには、ブラウザカメラとマイクの使用を許可してください。
@@ -1382,10 +1242,10 @@ export default function InterviewSession() {
               <div className="bg-white rounded-lg shadow-lg p-6">
                 <div className="mb-6">
                   <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    現在の質問: ({currentQuestion.type} {currentQuestion.current}/{currentQuestion.total})
+                    {/* 現在の質問: ({currentQuestion.type} {currentQuestion.current}/{currentQuestion.total}) */}
                   </h3>
                   <p className="text-gray-700">
-                    {currentQuestion.text}
+                    {/* {currentQuestion.text} */}
                   </p>
                 </div>
 
@@ -1408,7 +1268,7 @@ export default function InterviewSession() {
                   {aiResponse && <AIResponseComponent />}
 
                   <div className="flex justify-end mt-4">
-                    <button
+                    {/* <button
                       onClick={
                         currentQuestionIndex >= baseQuestions.length + customQuestions.length - 1
                           ? handleFinishInterview
@@ -1422,7 +1282,7 @@ export default function InterviewSession() {
                       disabled={isSpeaking}
                     >
                       {currentQuestionIndex >= baseQuestions.length + customQuestions.length - 1 ? '面接終了' : '次の質問へ'}
-                    </button>
+                    </button> */}
                   </div>
                 </div>
               </div>
