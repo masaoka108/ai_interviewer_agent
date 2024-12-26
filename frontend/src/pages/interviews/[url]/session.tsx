@@ -72,6 +72,9 @@ export default function InterviewSession() {
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const audioElement = useRef<HTMLAudioElement | null>(null);
 
+  // 音声再生状態の管理を追加
+  const [isAudioPlaying, setIsAudioPlaying] = useState<boolean>(false);
+
   // WebRTC接続を開始する関数
   async function startRealTimeSession() {
     try {
@@ -83,9 +86,22 @@ export default function InterviewSession() {
       const pc = new RTCPeerConnection();
       peerConnection.current = pc;
 
-      // 音声出力の設定
+      // 音声出力の設定を拡張
       audioElement.current = document.createElement("audio");
       audioElement.current.autoplay = true;
+      
+      // 音声再生開始イベントの検知を追加
+      audioElement.current.onplay = () => {
+        console.log('Audio started playing');
+        setIsAudioPlaying(true);
+      };
+      
+      // 音声再生停止イベントの検知も追加
+      audioElement.current.onpause = () => {
+        console.log('Audio paused');
+        setIsAudioPlaying(false);
+      };
+
       pc.ontrack = (e) => {
         if (audioElement.current) {
           audioElement.current.srcObject = e.streams[0];
@@ -201,7 +217,7 @@ export default function InterviewSession() {
   
   // 初期質問の読み上げを修正
   useEffect(() => {
-     // コンポーネントの初回マウント時に実行される
+     // コンポーネントの初期マウント時に実行される
 
   }, [isRecognitionEnabled, hasSpokenInitialQuestion, isInitialized]);
 
@@ -624,7 +640,7 @@ export default function InterviewSession() {
       
       if (isBrave) {
         console.log('Brave browser detected');
-        setError('Braveブラウザでは音声認識機能���制限���れる可能性があります。Chromeブラウザの使用を推奨します。');
+        setError('Braveブラウザでは音声認識機能が制限される可能性があります。Chromeブラウザの使用を推奨します。');
         setBrowserSupported(false);
       } else if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
         console.log('Speech recognition not supported');
@@ -1218,11 +1234,16 @@ export default function InterviewSession() {
                 <div className="bg-white rounded-lg shadow-lg aspect-video relative flex items-center justify-center">
                   {interview && (
                     <div className="relative w-full h-full flex items-center justify-center">
-                      <img
-                        src={interview.avatar_type === 'male' 
-                          ? '/avatars/male-avatar.png' 
-                          : '/avatars/female-avatar.png'}
-                        alt="AI面接官"
+                      <video
+                        src={isAudioPlaying 
+                          ? "/avatars/female-avatar-speaking-no-voice.mp4"
+                          : "/avatars/female-avatar-speaking-default-no-voice.mp4"
+                        }
+                        autoPlay
+                        loop
+                        muted
+                        playbackRate={0.5}
+                        controls={false}
                         className="max-h-full max-w-full object-contain"
                       />
                     </div>

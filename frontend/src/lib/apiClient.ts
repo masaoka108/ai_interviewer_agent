@@ -3,7 +3,7 @@ import axios, { AxiosInstance } from 'axios';
 // サーバーサイドとクライアントサイドで異なるベースURLを使用
 const baseURL = typeof window === 'undefined' 
   ? 'http://backend:8000/api/v1'  // サーバーサイド（Docker内）
-  : process.env.NEXT_PUBLIC_API_URL;  // クライアントサイド
+  : `${process.env.NEXT_PUBLIC_API_URL}/api/v1`;  // クライアントサイド
 
 console.log('Configuring API client with base URL:', baseURL);
 
@@ -13,7 +13,7 @@ if (!baseURL) {
 }
 
 export const apiClient: AxiosInstance = axios.create({
-  baseURL: `${process.env.NEXT_PUBLIC_API_URL}/api/v1`,
+  baseURL: baseURL,
   headers: {
     'Content-Type': 'application/json',
   },
