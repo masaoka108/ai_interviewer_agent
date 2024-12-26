@@ -1,4 +1,5 @@
 import React from 'react';
+import Image from 'next/image';
 
 interface CandidateLayoutProps {
   children: React.ReactNode;
@@ -11,7 +12,13 @@ export default function CandidateLayout({ children }: CandidateLayoutProps) {
       <header className="bg-gradient-to-r from-indigo-600 to-purple-600 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
-            <div className="flex items-center">
+            <div className="flex items-center space-x-3">
+              <Image 
+                src="/logo/ai_interview_agent_logo.png"
+                alt="AI面接エージェントロゴ"
+                width={40}
+                height={40}
+              />
               <span className="text-white text-xl font-semibold">採用面接AIエージェント</span>
             </div>
             <div className="flex items-center space-x-4">

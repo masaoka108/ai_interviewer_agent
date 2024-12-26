@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuth } from '../../contexts/AuthContext';
+import Image from 'next/image';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -39,7 +40,15 @@ export default function MainLayout({ children }: MainLayoutProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
               </button>
+              
               <Link href="/" className="flex items-center ml-4">
+                <Image
+                  src="/logo/ai_interview_agent_logo.png"
+                  alt="採用面接AIエージェント"
+                  width={40}
+                  height={40}
+                  className="mr-2"
+                />
                 <span className="text-xl font-bold text-white hover:text-indigo-100">採用面接AIエージェント</span>
               </Link>
             </div>

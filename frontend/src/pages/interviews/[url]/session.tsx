@@ -33,6 +33,18 @@ const MEDIA_RECORDER_OPTIONS = {
   videoBitsPerSecond: 2500000, // 2.5 Mbps
 };
 
+// 動画のクロスフェード用のスタイルを定義
+const videoStyle = (isVisible: boolean) => ({
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  width: '100%',
+  height: '100%',
+  objectFit: 'contain' as const,
+  transition: 'opacity 0.3s ease-in-out',
+  opacity: isVisible ? 1 : 0,
+});
+
 export default function InterviewSession() {
   console.log('InterviewSession component rendering');
   const router = useRouter();
@@ -90,21 +102,58 @@ export default function InterviewSession() {
       audioElement.current = document.createElement("audio");
       audioElement.current.autoplay = true;
       
-      // 音声再生開始イベントの検知を追加
-      audioElement.current.onplay = () => {
-        console.log('Audio started playing');
-        setIsAudioPlaying(true);
-      };
-      
-      // 音声再生停止イベントの検知も追加
-      audioElement.current.onpause = () => {
-        console.log('Audio paused');
-        setIsAudioPlaying(false);
-      };
-
+      // WebRTCのリモートからの音声ストリームを処理する部分
       pc.ontrack = (e) => {
         if (audioElement.current) {
           audioElement.current.srcObject = e.streams[0];
+          const audioTrack = e.streams[0].getAudioTracks()[0];
+          
+          // 音声解析を使用して実際の音声出力を検出
+          const audioContext = new AudioContext();
+          const source = audioContext.createMediaStreamSource(e.streams[0]);
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 2048;
+          source.connect(analyser);
+
+          // 音声レベルを監視する関数
+          const checkAudioLevel = () => {
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(dataArray);
+            
+            // 音声レベルの平均を計算
+            const average = dataArray.reduce((acc, value) => acc + value, 0) / dataArray.length;
+            
+            // しきい値を設定（要調整）
+            const threshold = 10;
+            const isCurrentlyPlaying = average > threshold;
+            
+            console.log('Audio level:', average);
+            setIsAudioPlaying(isCurrentlyPlaying);
+          };
+
+          // 定期的に音声レベルをチェック
+          const checkInterval = setInterval(checkAudioLevel, 100);
+
+          // 既存のイベントリスナーも維持
+          audioElement.current.onplaying = () => {
+            console.log('Audio started playing');
+          };
+
+          audioElement.current.onpause = () => {
+            console.log('Audio paused');
+            setIsAudioPlaying(false);
+          };
+
+          audioElement.current.onended = () => {
+            console.log('Audio ended');
+            setIsAudioPlaying(false);
+          };
+
+          // クリーンアップ関数を返す
+          return () => {
+            clearInterval(checkInterval);
+            audioContext.close();
+          };
         }
       };
 
@@ -138,20 +187,23 @@ export default function InterviewSession() {
 1. 面接の進め方：
 - 最初に自己紹介を求めてください
 - 質問は1つずつ行い、回答を十分に聞いてから次の質問に進んでください
-- 回答に対して適切なフォローアップ質問をしてください
+- 十分に回答が得られない場合、候補者の回答に対して適切なフォローアップ質問をしてください
+- 十分に回答が得られたら次に質問を投げかけてください
 - 面接官らしい丁寧な言葉遣いを心がけてください
+- 全ての質問項目が完了したら「本日はお忙しい中ありがとうございました。こちらで面接は終了となります。結果はまたご連絡しますので引き続きよろしくお願いします。」とお礼をしてください。
 
 2. 主な質問項目：
 - PM経験の年数
 - これまで担当したプロジェクトの規模や業界
+- AI案件の経験について
 - チーム管理やステークホルダーとのコミュニケーションについて
 - 困難な状況での問題解決例
-- プロジェクト管理手法について
 
 3. 注意事項：
 - 面接の文脈に関係のない会話は避けてください
 - 面接官としての立場を常に維持してください
 - 具体的な例を求めながら、候補者の経験を深く理解するよう努めてください
+- なるべく簡潔に回答して候補者とのコミュニケーションをスムーズに進めてください
 `,
             modalities: ["audio", "text"]
           }
@@ -942,7 +994,7 @@ export default function InterviewSession() {
     try {
       console.log('\n=== Interview Submission Debug Log ===');
       
-      // interview オブジェクトの詳細確認
+      // interview オブジェクトの詳���確認
       console.log('Interview Details:', {
         id: interview?.id,
         job_posting_id: interview?.job_posting_id,
@@ -1234,17 +1286,25 @@ export default function InterviewSession() {
                 <div className="bg-white rounded-lg shadow-lg aspect-video relative flex items-center justify-center">
                   {interview && (
                     <div className="relative w-full h-full flex items-center justify-center">
+                      {/* 通常状態の動画 */}
                       <video
-                        src={isAudioPlaying 
-                          ? "/avatars/female-avatar-speaking-no-voice.mp4"
-                          : "/avatars/female-avatar-speaking-default-no-voice.mp4"
-                        }
+                        src="/avatars/female-avatar-speaking-default-no-voice.mp4"
                         autoPlay
                         loop
                         muted
                         playbackRate={0.5}
                         controls={false}
-                        className="max-h-full max-w-full object-contain"
+                        style={videoStyle(!isAudioPlaying)}
+                      />
+                      {/* 発話状態の動画 */}
+                      <video
+                        src="/avatars/female-avatar-speaking-no-voice.mp4"
+                        autoPlay
+                        loop
+                        muted
+                        playbackRate={0.5}
+                        controls={false}
+                        style={videoStyle(isAudioPlaying)}
                       />
                     </div>
                   )}
