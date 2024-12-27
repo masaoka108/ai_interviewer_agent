@@ -81,7 +81,8 @@ export default function InterviewSession() {
 
   // WebRTC関連の状態を追加
   const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
-  const peerConnection = useRef<RTCPeerConnection | null>(null);
+  // const peerConnection = useRef<RTCPeerConnection | null>(null);
+  const peerConnection = useRef(null);
   const audioElement = useRef<HTMLAudioElement | null>(null);
 
   // 音声再生状態の管理を追加
@@ -93,129 +94,53 @@ export default function InterviewSession() {
       // トークンの取得
       const tokenResponse = await apiClient.get("/openai/token");
       const EPHEMERAL_KEY = tokenResponse.data.client_secret.value;
+      console.log('EPHEMERAL_KEY:', EPHEMERAL_KEY);
 
       // RTCPeerConnectionの作成
       const pc = new RTCPeerConnection();
-      peerConnection.current = pc;
 
-      // 音声出力の設定を拡張
+      // 音声出力の設定
       audioElement.current = document.createElement("audio");
       audioElement.current.autoplay = true;
-      
-      // WebRTCのリモートからの音声ストリームを処理する部分
       pc.ontrack = (e) => {
-        if (audioElement.current) {
-          audioElement.current.srcObject = e.streams[0];
-          const audioTrack = e.streams[0].getAudioTracks()[0];
-          
-          // 音声解析を使用して実際の音声出力を検出
-          const audioContext = new AudioContext();
-          const source = audioContext.createMediaStreamSource(e.streams[0]);
-          const analyser = audioContext.createAnalyser();
-          analyser.fftSize = 2048;
-          source.connect(analyser);
+        audioElement.current.srcObject = e.streams[0];
+        
+        // 音声出力の状態監視を追加
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(e.streams[0]);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
 
-          // 音声レベルを監視する関数
-          const checkAudioLevel = () => {
-            const dataArray = new Uint8Array(analyser.frequencyBinCount);
-            analyser.getByteFrequencyData(dataArray);
-            
-            // 音声レベルの平均を計算
-            const average = dataArray.reduce((acc, value) => acc + value, 0) / dataArray.length;
-            
-            // しきい値を設定（要調整）
-            const threshold = 10;
-            const isCurrentlyPlaying = average > threshold;
-            
-            console.log('Audio level:', average);
-            setIsAudioPlaying(isCurrentlyPlaying);
-          };
+        const checkAudioLevel = () => {
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          analyser.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((acc, value) => acc + value, 0) / dataArray.length;
+          setIsAudioPlaying(average > 10);
+        };
 
-          // 定期的に音声レベルをチェック
-          const checkInterval = setInterval(checkAudioLevel, 100);
-
-          // 既存のイベントリスナーも維持
-          audioElement.current.onplaying = () => {
-            console.log('Audio started playing');
-          };
-
-          audioElement.current.onpause = () => {
-            console.log('Audio paused');
-            setIsAudioPlaying(false);
-          };
-
-          audioElement.current.onended = () => {
-            console.log('Audio ended');
-            setIsAudioPlaying(false);
-          };
-
-          // クリーンアップ関数を返す
-          return () => {
-            clearInterval(checkInterval);
-            audioContext.close();
-          };
-        }
+        const checkInterval = setInterval(checkAudioLevel, 100);
+        return () => clearInterval(checkInterval);
       };
 
-      // マイク入力の追加
+      // マイク入力の設定
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: true
       });
       pc.addTrack(stream.getTracks()[0]);
 
-      // データチャンネルの設定
+      // データチャネルの設定
       const dc = pc.createDataChannel("oai-events");
       setDataChannel(dc);
 
-      // イベントリスナーの設定
-      dc.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === "text") {
-          setAiResponse(prev => prev + data.content);
-        }
-      };
-
-      // 初期設定メッセージの送信
-      dc.onopen = () => {
-        // セッション更新メッセージを送信
-        const sessionUpdate = {
-          type: "session.update",
-          session: {
-            instructions: `
-あなたはIT企業の採用面接官です。以下の指示に従って面接を進めてください：
-
-1. 面接の進め方：
-- 最初に自己紹介を求めてください
-- 質問は1つずつ行い、回答を十分に聞いてから次の質問に進んでください
-- 十分に回答が得られない場合、候補者の回答に対して適切なフォローアップ質問をしてください
-- 十分に回答が得られたら次に質問を投げかけてください
-- 面接官らしい丁寧な言葉遣いを心がけてください
-- 全ての質問項目が完了したら「本日はお忙しい中ありがとうございました。こちらで面接は終了となります。結果はまたご連絡しますので引き続きよろしくお願いします。」とお礼をしてください。
-
-2. 主な質問項目：
-- PM経験の年数
-- これまで担当したプロジェクトの規模や業界
-- AI案件の経験について
-- チーム管理やステークホルダーとのコミュニケーションについて
-- 困難な状況での問題解決例
-
-3. 注意事項：
-- 面接の文脈に関係のない会話は避けてください
-- 面接官としての立場を常に維持してください
-- 具体的な例を求めながら、候補者の経験を深く理解するよう努めてください
-- なるべく簡潔に回答して候補者とのコミュニケーションをスムーズに進めてください
-`,
-            modalities: ["audio", "text"]
-          }
-        };
-        dc.send(JSON.stringify(sessionUpdate));
-      };
+      // データチャネルのイベントハンドラを設定
+      setupDataChannelHandlers(dc);
 
       // SDPオファーの作成と送信
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const response = await fetch("https://api.openai.com/v1/realtime", {
+      const response = await fetch("https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${EPHEMERAL_KEY}`,
@@ -229,212 +154,196 @@ export default function InterviewSession() {
         sdp: await response.text(),
       };
       await pc.setRemoteDescription(answer);
+
+      peerConnection.current = pc;
+
+      return true;
     } catch (error) {
       console.error("Failed to start realtime session:", error);
       setError("リアルタイムセッションの開始に失敗しました");
+      return false;
     }
   }
 
-  // メッセージ送信関数
-  function sendMessage(message: string) {
-    if (!dataChannel) {
-      console.error("No data channel available");
-      return;
-    }
-
-    const event = {
-      type: "conversation.item.create",
-      item: {
-        type: "message",
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: message,
-          },
-        ],
-      },
-    };
-
-    dataChannel.send(JSON.stringify(event));
-    dataChannel.send(JSON.stringify({
-      type: "response.create",
-      response: {
-        modalities: ["audio", "text"],
-        instructions: "あなたはPM（プロジェクトマネージャー）を採用するための面接官です。日本語で面接を進めてください。",
-      },
-    }));
-  }
-
-  
-  // 初期質問の読み上げを修正
-  useEffect(() => {
-     // コンポーネントの初期マウント時に実行される
-
-  }, [isRecognitionEnabled, hasSpokenInitialQuestion, isInitialized]);
-
-  // 音声認識の結果をAIに送信する関数を修正
-  const handleSpeechResult = useCallback((event: SpeechRecognitionEvent) => {
-    const results = Array.from(event.results);
-    const lastResult = results[results.length - 1];
-    
-    if (lastResult.isFinal) {
-      const finalText = lastResult[0].transcript;
-      setTranscription(prev => {
-        const newTranscription = prev ? `${prev}\n${finalText}` : finalText;
-        // 最終的な文章をOpenAIに送信
-        sendMessage(finalText);
-        return newTranscription;
-      });
-      setInterimTranscript('');
+  function sendClientEvent(message) {
+    if (dataChannel) {
+      message.event_id = message.event_id || crypto.randomUUID();
+      dataChannel.send(JSON.stringify(message));
+      setEvents((prev) => [message, ...prev]);
     } else {
-      setInterimTranscript(lastResult[0].transcript);
+      console.error(
+        "Failed to send message - no data channel available",
+        message,
+      );
     }
-  }, []);
+  }
 
-  // 音声認識の開始
-  const startSpeechRecognition = useCallback(() => {
-    try {
-      // WebSocket接続状態を確認
-      console.log('\n=== Checking WebSocket Status ===');
-      console.log('WebSocket state:', {
-        exists: !!wsRef.current,
-        readyState: wsRef.current?.readyState,
-        isConnected: wsRef.current?.readyState === WebSocket.OPEN,
-      });
+  // データチャネルのイベントハンドラを設定する関数を追加
+  function setupDataChannelHandlers(dc: RTCDataChannel) {
+    dc.onopen = () => {
+      console.log("Data channel opened");
+      
+      // セッション初期化メッセージを送信
+      const sessionUpdate = {
+        type: "session.update",
+        session: {
+          instructions: `
+あなたはIT企業の採用面接官です。以下の指示に従って面接を進めてください：
 
-      if (!recognitionRef.current) {
-        console.error('Recognition not initialized');
-        return;
-      }
+1. 面接の進め方：
+- 最初に「はじめまして。本日は面接にお時間をいただきありがとうございます。それでは、まず簡単な自己紹介をお願いできますでしょうか？」と自己紹介を求めてください
+- 質問は1つずつ行い、回答を十分に聞いてから次の質問に進んでください
+- 十分に回答が得られない場合、候補者の回答に対して適切なフォローアップ質問をしてください
+- 面接官らしい丁寧な言葉遣いを心がけてください
 
-      if (isListening) {
-        console.log('Recognition is already running');
-        return;
-      }
+2. 主な質問項目：
+- PM経験の年数
+- これまで担当したプロジェクトの規模や業界
+- AI案件の経験について
+- チーム管理やステークホルダーとのコミュニケーションについて
+- 困難な状況での問題解決例
 
-      console.log('Starting speech recognition...');
-      recognitionRef.current.start();
-      setIsRecognitionEnabled(true);
-      setIsListening(true);
-      autoRestartRef.current = true;
-      setError(''); // エラーメッセージをクリア
-    } catch (error) {
-      console.error('Error starting speech recognition:', error);
-      setError('音声認識の開始に失敗しました。ページを更新してください。');
-    }
-  }, [isListening]);
+3. 注意事項：
+- 面接の文脈に関係のない会話は避けてください
+- 面接官としての立場を常に維持してください
+- 具体的な例を求めながら、候補者の経験を深く理解するよう努めてください
+- 日本語で応答してください
+`,
+          modalities: ["audio", "text"],
+          voice: "alloy",
+        }
+      };
+      dc.send(JSON.stringify(sessionUpdate));
 
-  // 音声認識の停止
-  const stopSpeechRecognition = useCallback(() => {
-    try {
-      if (!recognitionRef.current) {
-        console.log('Recognition not initialized');
-        return;
-      }
-
-      if (!isListening) {
-        console.log('Recognition is not running');
-        return;
-      }
-
-      console.log('Stopping speech recognition...');
-      recognitionRef.current.stop();
-      setIsRecognitionEnabled(false);
-      setIsListening(false);
-      autoRestartRef.current = false;
-    } catch (error) {
-      console.error('Error stopping speech recognition:', error);
-    }
-  }, [isListening]);
-
-  // 音声認識の初期化
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    console.log('Initializing speech recognition...');
-    
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
-    if (!SpeechRecognition) {
-      console.log('Speech recognition not supported');
-      setBrowserSupported(false);
-      setError('このブラウザは音声認識に対応していません。Chromeブラウザの使用を推奨します。');
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'ja-JP';
-
-    recognition.onstart = () => {
-      console.log('Speech recognition service has started');
-      setIsListening(true);
-      setError('');
+      // 初期の応答を要求
+      setTimeout(() => {
+        const responseEvent = {
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"]
+          }
+        };
+        dc.send(JSON.stringify(responseEvent));
+      }, 1000);
     };
 
-    recognition.onend = () => {
-      console.log('Speech recognition service disconnected');
-      setIsListening(false);
-      
-      // 自動再開が有効な場合は再起動
-      if (autoRestartRef.current && isRecognitionEnabled && !isListening) {
-        console.log('Automatically restarting speech recognition...');
-        setTimeout(() => {
-          if (autoRestartRef.current && !isListening) {
-            try {
-              recognition.start();
-            } catch (error) {
-              console.error('Error restarting recognition:', error);
-              setError('音声認識の再開に失敗しました。ページを更新してください。');
+    dc.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleServerEvent(data);
+      } catch (error) {
+        console.error("Error parsing data channel message:", error);
+      }
+    };
+
+    dc.onerror = (error) => {
+      console.error("Data channel error:", error);
+      setError("通信エラーが発生しました");
+    };
+
+    dc.onclose = () => {
+      console.log("Data channel closed");
+      setError("通信が切断されました");
+    };
+  }
+
+  // サーバーイベントを処理する関数を追加
+  function handleServerEvent(event: any) {
+    console.log("Received server event:", event);
+
+    switch (event.type) {
+      case "session.created":
+        console.log("Session created:", event.session);
+        // 初期の応答を要求
+        if (dataChannel) {
+          const responseEvent = {
+            type: "response.create",
+            response: {
+              modalities: ["audio", "text"]
             }
-          }
-        }, 1000);
-      }
-    };
+          };
+          dataChannel.send(JSON.stringify(responseEvent));
+        }
+        break;
 
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.error('Speech recognition error:', event.error);
-      
-      switch (event.error) {
-        case 'not-allowed':
-          setError('マイクの使用が許可されていません。ブラウザの設定を確認してください。');
-          autoRestartRef.current = false;
-          break;
-          
-        case 'no-speech':
-          console.log('No speech detected');
-          break;
-          
-        case 'aborted':
-          console.log('Recognition aborted');
-          if (autoRestartRef.current && isRecognitionEnabled) {
+      case "session.updated":
+        console.log("Session updated:", event.session);
+        break;
+
+      case "conversation.item.created":
+        console.log("Conversation item created:", event.item);
+        // 音声入力の場合、トランスクリプションを取得
+        if (event.item.content?.[0]?.type === "input_audio") {
+          const transcript = event.item.content[0].transcript;
+          if (transcript) {
+            setTranscription(prev => prev + transcript + "\n");
+            // 音声認識結果をAIに送信
+            sendTranscriptionToAI(transcript);
+          }
+        }
+        break;
+
+      case "response.created":
+        console.log("Response created:", event.response);
+        break;
+
+      case "response.text.delta":
+        setAiResponse(prev => prev + event.delta);
+        break;
+
+      case "response.audio_transcript.delta":
+        setInterimTranscript(event.delta);
+        break;
+
+      case "response.audio_transcript.done":
+        setTranscription(prev => prev + event.transcript + "\n");
+        setInterimTranscript("");
+        // 音声認識結果をAIに送信
+        sendTranscriptionToAI(event.transcript);
+        break;
+
+      case "input_audio_buffer.speech_started":
+        console.log("Speech started");
+        setIsListening(true);
+        break;
+
+      case "input_audio_buffer.speech_stopped":
+        console.log("Speech stopped");
+        setIsListening(false);
+        break;
+
+      case "input_audio_buffer.committed":
+        console.log("Audio buffer committed");
+        break;
+
+      case "response.done":
+        console.log("Response completed:", event.response);
+        if (event.response.status === "failed") {
+          console.error("Response failed:", event.response.status_details);
+          // エラーの種類に応じて再試行
+          if (dataChannel) {
+            const responseEvent = {
+              type: "response.create",
+              response: {
+                modalities: ["audio", "text"]
+              }
+            };
             setTimeout(() => {
-              startSpeechRecognition();
+              dataChannel.send(JSON.stringify(responseEvent));
             }, 1000);
           }
-          break;
-          
-        default:
-          setError('音声認識でエラーが発生しました。');
-          if (autoRestartRef.current && isRecognitionEnabled) {
-            setTimeout(() => {
-              startSpeechRecognition();
-            }, 1000);
-          }
-      }
-    };
+        }
+        break;
 
-    recognition.onresult = handleSpeechResult;
-    recognitionRef.current = recognition;
+      case "error":
+        console.error("Server error:", event.error);
+        setError(`エラーが発生しました: ${event.error}`);
+        break;
 
-    return () => {
-      stopSpeechRecognition();
-    };
-  }, [handleSpeechResult, isRecognitionEnabled, startSpeechRecognition, stopSpeechRecognition]);
+      default:
+        console.log("Unhandled event type:", event.type);
+    }
+  }
 
   // メディアデバイスの権限を要求
   const requestMediaPermissions = useCallback(async () => {
@@ -538,6 +447,9 @@ export default function InterviewSession() {
       console.log('Video element mounted');
       setIsVideoElementMounted(true);
     }
+
+    //  とりあえず進めるために
+    setIsInitialized(true);
   }, []);
 
   // カメラの初期化
@@ -733,35 +645,35 @@ export default function InterviewSession() {
   }, [url]);
 
   // 音声合成の初期化を修正
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      // 音声合成の初期化を確認
-      const initSpeechSynthesis = () => {
-        const voices = window.speechSynthesis.getVoices();
-        if (voices.length > 0) {
-          const jaVoice = voices.find(voice => voice.lang === 'ja-JP');
-          if (jaVoice) {
-            console.log('Japanese voice found:', jaVoice.name);
-            setIsInitialized(true);
-          } else {
-            console.log('No Japanese voice found, using default voice');
-            setIsInitialized(true);
-          }
-        }
-      };
+  // useEffect(() => {
+  //   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  //     // 音声合成の初期化を確認
+  //     const initSpeechSynthesis = () => {
+  //       const voices = window.speechSynthesis.getVoices();
+  //       if (voices.length > 0) {
+  //         const jaVoice = voices.find(voice => voice.lang === 'ja-JP');
+  //         if (jaVoice) {
+  //           console.log('Japanese voice found:', jaVoice.name);
+  //           setIsInitialized(true);
+  //         } else {
+  //           console.log('No Japanese voice found, using default voice');
+  //           setIsInitialized(true);
+  //         }
+  //       }
+  //     };
 
-      // 初期化時に度実行
-      initSpeechSynthesis();
+  //     // 初期化時に度実行
+  //     initSpeechSynthesis();
 
-      // voiceschangedイベントのリスナーを設定
-      window.speechSynthesis.onvoiceschanged = initSpeechSynthesis;
+  //     // voiceschangedイベントのリスナーを設定
+  //     window.speechSynthesis.onvoiceschanged = initSpeechSynthesis;
 
-      // クリーンアップ
-      return () => {
-        window.speechSynthesis.onvoiceschanged = null;
-      };
-    }
-  }, []);
+  //     // クリーンアップ
+  //     return () => {
+  //       window.speechSynthesis.onvoiceschanged = null;
+  //     };
+  //   }
+  // }, []);
 
   // クリーンアップ
   useEffect(() => {
@@ -901,65 +813,65 @@ export default function InterviewSession() {
     }
   }, [error]);
 
-  // WebSocket接続を行う関数を修正
-  const connectWebSocket = useCallback(() => {
-    return new Promise<void>((resolve, reject) => {
-      try {
-        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001';
-        console.log('Initializing WebSocket connection:', {
-          wsUrl,
-          interviewId: interview?.id,
-        });
+  // // WebSocket接続を行う関数を修正
+  // const connectWebSocket = useCallback(() => {
+  //   return new Promise<void>((resolve, reject) => {
+  //     try {
+  //       const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001';
+  //       console.log('Initializing WebSocket connection:', {
+  //         wsUrl,
+  //         interviewId: interview?.id,
+  //       });
 
-        // 既存の接続をクリーンアップ
-        if (wsRef.current) {
-          console.log('Cleaning up existing connection');
-          wsRef.current.close();
-          wsRef.current = null;
-        }
+  //       // 既存の接続をクリーンアップ
+  //       if (wsRef.current) {
+  //         console.log('Cleaning up existing connection');
+  //         wsRef.current.close();
+  //         wsRef.current = null;
+  //       }
 
-        const ws = new WebSocket(`${wsUrl}/ws/interview?interviewId=${interview?.id}`);
-        console.log('WebSocket instance created');
+  //       const ws = new WebSocket(`${wsUrl}/ws/interview?interviewId=${interview?.id}`);
+  //       console.log('WebSocket instance created');
 
-        // 接続タイムアウトの設定
-        const connectionTimeout = setTimeout(() => {
-          if (ws.readyState !== WebSocket.OPEN) {
-            console.error('Connection timeout');
-            ws.close();
-            reject(new Error('Connection timeout'));
-          }
-        }, 5000);
+  //       // 接続タイムアウトの設定
+  //       const connectionTimeout = setTimeout(() => {
+  //         if (ws.readyState !== WebSocket.OPEN) {
+  //           console.error('Connection timeout');
+  //           ws.close();
+  //           reject(new Error('Connection timeout'));
+  //         }
+  //       }, 5000);
 
-        ws.onopen = () => {
-          clearTimeout(connectionTimeout);
-          console.log('WebSocket connection established');
-          wsRef.current = ws;
-          resolve();
-        };
+  //       ws.onopen = () => {
+  //         clearTimeout(connectionTimeout);
+  //         console.log('WebSocket connection established');
+  //         wsRef.current = ws;
+  //         resolve();
+  //       };
 
-        ws.onerror = (error) => {
-          clearTimeout(connectionTimeout);
-          console.error('WebSocket error:', error);
-          reject(error);
-        };
+  //       ws.onerror = (error) => {
+  //         clearTimeout(connectionTimeout);
+  //         console.error('WebSocket error:', error);
+  //         reject(error);
+  //       };
 
-        ws.onclose = (event) => {
-          clearTimeout(connectionTimeout);
-          console.log('WebSocket closed:', {
-            code: event.code,
-            reason: event.reason,
-            wasClean: event.wasClean,
-          });
-          wsRef.current = null;
-        };
+  //       ws.onclose = (event) => {
+  //         clearTimeout(connectionTimeout);
+  //         console.log('WebSocket closed:', {
+  //           code: event.code,
+  //           reason: event.reason,
+  //           wasClean: event.wasClean,
+  //         });
+  //         wsRef.current = null;
+  //       };
 
-      } catch (error) {
-        console.error('WebSocket initialization error:', error);
-        reject(error);
-      }
-    });
-  // }, [interview?.id]);
-  });
+  //     } catch (error) {
+  //       console.error('WebSocket initialization error:', error);
+  //       reject(error);
+  //     }
+  //   });
+  // // }, [interview?.id]);
+  // });
 
   // handleStartInterview は connectWebSocket の後に定義
   const handleStartInterview = useCallback(async () => {
@@ -979,22 +891,23 @@ export default function InterviewSession() {
       // カメラの初期化
       await startCamera();
 
-      // 音声認識の開始
-      await startSpeechRecognition();
+      // // 音声認識の開始
+      // await startSpeechRecognition();
 
     } catch (error) {
       console.error('Failed to start interview:', error);
       setError('面接の開始に失敗しました: ' + error.message);
       setShowStartButton(true);
     }
-  }, [requestMediaPermissions, startRealTimeSession, startCamera, startSpeechRecognition]);
+  }, []);
+  // }, [requestMediaPermissions, startRealTimeSession, startCamera, startSpeechRecognition]);
 
   // 面接終了の処理を追加
   const handleFinishInterview = useCallback(async () => {
     try {
       console.log('\n=== Interview Submission Debug Log ===');
       
-      // interview オブジェクトの詳���確認
+      // interview オブジェクトの詳細確認
       console.log('Interview Details:', {
         id: interview?.id,
         job_posting_id: interview?.job_posting_id,
@@ -1183,6 +1096,67 @@ export default function InterviewSession() {
       </p>
     </div>
   );
+
+  // 音声認識結果をAIに送信する関数を追加
+  function sendTranscriptionToAI(text: string) {
+    if (!dataChannel) {
+      console.error("No data channel available");
+      return;
+    }
+
+    console.log("Sending transcription to AI:", text);
+
+    try {
+      // まず会話アイテムを作成
+      const conversationEvent = {
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: text,
+            }
+          ]
+        }
+      };
+      dataChannel.send(JSON.stringify(conversationEvent));
+
+      // 少し待ってから応答生成を要求
+      setTimeout(() => {
+        const responseEvent = {
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"],
+            instructions: `
+前の会話の文脈を踏まえて、面接官として以下の点に注意して応答してください：
+- 相手の発言をよく聞き、適切なフォローアップ質問をする
+- 具体的な例を引き出すように質問する
+- 丁寧な言葉遣いを維持する
+- 面接官らしい振る舞いを保つ
+`
+          }
+        };
+        dataChannel.send(JSON.stringify(responseEvent));
+      }, 500);
+
+    } catch (error) {
+      console.error("Error sending transcription:", error);
+      setError("メッセージの送信に失敗しました");
+    }
+  }
+
+  // デバッグログの追加
+  useEffect(() => {
+    console.log("Current state:", {
+      isListening,
+      transcription,
+      aiResponse,
+      dataChannel: !!dataChannel,
+      peerConnection: !!peerConnection.current
+    });
+  }, [isListening, transcription, aiResponse, dataChannel]);
 
   if (error) {
     return (

@@ -27,15 +27,13 @@ async def get_realtime_token():
                 },
                 json={
                     "model": "gpt-4o-realtime-preview-2024-12-17",
-                    "voice": "shimmer", # alloy, ash, ballad, coral, echo sage, shimmer and verse
+                    "voice": "shimmer",
+                    # instructions は frontend で設定するため、ここでは省略
                 }
             )
             return response.json()
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"OpenAI Realtime APIとの通信中にエラーが発生しました: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 # @router.websocket("/ws")
 # async def websocket_endpoint(websocket: WebSocket):
