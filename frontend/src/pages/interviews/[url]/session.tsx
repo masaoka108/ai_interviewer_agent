@@ -2,22 +2,22 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import CandidateLayout from '@/components/layouts/CandidateLayout';
 import { apiClient } from '@/lib/apiClient';
-import { InterviewData, CustomQuestion, BaseQuestion } from '@/types';
+import { InterviewData, InterviewResponse, BaseQuestion } from '@/types';
 // import Image from 'next/image';
 
-// 型定義を追加
-interface Window {
-  SpeechRecognition?: new () => SpeechRecognition;
-  webkitSpeechRecognition?: new () => SpeechRecognition;
-}
+// // 型定義を追加
+// interface Window {
+//   SpeechRecognition?: new () => SpeechRecognition;
+//   webkitSpeechRecognition?: new () => SpeechRecognition;
+// }
 
-interface SpeechRecognitionErrorEvent extends Event {
-  error: 'aborted' | 'not-allowed' | 'no-speech' | string;
-}
+// interface SpeechRecognitionErrorEvent extends Event {
+//   error: 'aborted' | 'not-allowed' | 'no-speech' | string;
+// }
 
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-}
+// interface SpeechRecognitionEvent extends Event {
+//   results: SpeechRecognitionResultList;
+// }
 
 // 新しい型定義を追加
 interface Answer {
@@ -87,6 +87,9 @@ export default function InterviewSession() {
 
   // 音声再生状態の管理を追加
   const [isAudioPlaying, setIsAudioPlaying] = useState<boolean>(false);
+  const urlRef = useRef<string>();
+  const interviewResponsesRef = useRef<string>();
+
 
   // WebRTC接続を開始する関数
   async function startRealTimeSession() {
@@ -183,6 +186,9 @@ export default function InterviewSession() {
     dc.onopen = () => {
       console.log("Data channel opened");
       
+      const questionsString = interviewResponsesRef.current.data.map(response => `- ${response.question_text}`).join('\n');
+      console.log('questionsString:', questionsString);
+
       // セッション初期化メッセージを送信
       const sessionUpdate = {
         type: "session.update",
@@ -197,11 +203,7 @@ export default function InterviewSession() {
 - 面接官らしい丁寧な言葉遣いを心がけてください
 
 2. 主な質問項目：
-- PM経験の年数
-- これまで担当したプロジェクトの規模や業界
-- AI案件の経験について
-- チーム管理やステークホルダーとのコミュニケーションについて
-- 困難な状況での問題解決例
+${questionsString}
 
 3. 注意事項：
 - 面接の文脈に関係のない会話は避けてください
@@ -622,9 +624,11 @@ export default function InterviewSession() {
   // データの取得
   const fetchInterview = async () => {
     try {
-      const response = await apiClient.get<InterviewData>(`/interviews/by-url/${url}`);
+      const response = await apiClient.get<InterviewData>(`/interviews/by-url/${urlRef.current}`);
       setInterview(response.data);
-      
+      console.log('fetchInterview - interview:', interview);
+
+      return response.data;
       // const [baseResponse, customResponse] = await Promise.all([
       //   apiClient.get<BaseQuestion[]>(`/interviews/${response.data.id}/base-questions`),
       //   apiClient.get<CustomQuestion[]>(`/interviews/${response.data.id}/custom-questions`)
@@ -641,6 +645,7 @@ export default function InterviewSession() {
   // 初期化
   useEffect(() => {
     if (url) {
+      urlRef.current = url;
       fetchInterview();
     }
   }, [url]);
@@ -879,6 +884,16 @@ export default function InterviewSession() {
     try {
       setShowStartButton(false);
       
+      // Interviewデータの取得
+      const interviewResponse = await fetchInterview();
+      console.log('interview:', interview);
+
+      // InterviewResponsesデータの取得
+      console.log('interviewResponsesRef.current:', interviewResponsesRef.current);
+      interviewResponsesRef.current = await apiClient.get<InterviewResponse>(`/interviews/${interviewResponse.id}/responses`);
+      console.log('interviewResponsesRef.current:', interviewResponsesRef.current);
+
+
       // メディア権限の要求
       const granted = await requestMediaPermissions();
       if (!granted) {
