@@ -37,19 +37,22 @@ class InterviewResponseBase(BaseModel):
     interview_id: int
     question_id: int
     question_text: str
-    answer_text: str
-    question_type: str
+    answer_text: Optional[str] = None
+    question_type: Optional[str] = None
 
 class InterviewResponseCreate(InterviewResponseBase):
     pass
 
 class InterviewResponse(InterviewResponseBase):
     id: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+        json_encoders = {
+            datetime: lambda dt: dt.isoformat() if dt else None
+        }
 
 class InterviewBase(BaseModel):
     job_posting_id: int

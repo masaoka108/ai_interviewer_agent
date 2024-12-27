@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import time
+from datetime import datetime
 
 from app.api import deps
 from app.crud import crud_interview
@@ -328,15 +329,23 @@ def update_custom_question(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{interview_id}/responses", response_model=List[InterviewResponse])
-def read_responses(
-    *,
-    db: Session = Depends(deps.get_db),
+def get_interview_responses(
     interview_id: int,
+    db: Session = Depends(deps.get_db),
 ) -> Any:
-    """
-    面接回答の取得
-    """
-    responses = crud_interview.interview.get_responses(db, interview_id=interview_id)
+    """面接の回答一覧を取得"""
+    interview = crud_interview.interview.get(db, id=interview_id)
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    
+    # レスポンスデータの datetime フィールドが None の場合、現在時刻を設定
+    responses = interview.interview_responses
+    for response in responses:
+        if response.created_at is None:
+            response.created_at = datetime.utcnow()
+        if response.updated_at is None:
+            response.updated_at = datetime.utcnow()
+    
     return responses
 
 @router.post("/{interview_id}/responses", response_model=InterviewResponse)
@@ -448,7 +457,7 @@ async def generate_questions(
     interview_id: int,
 ) -> Any:
     """
-    ���歴書と職務経歴書から質問を生成
+    履歴書と職務経歴書から質問を生成
     """
     interview = crud_interview.interview.get(db, id=interview_id)
     if not interview:
@@ -544,13 +553,54 @@ def update_interview_status_by_url(
     )
     return interview 
 
-@router.get("/{interview_id}/responses", response_model=List[InterviewResponse])
-def get_interview_responses(
-    interview_id: int,
+@router.put("/{interview_id}/responses/{response_id}", response_model=InterviewResponse)
+def update_interview_response(
+    *,
     db: Session = Depends(deps.get_db),
+    interview_id: int,
+    response_id: int,
+    response_in: dict,
 ) -> Any:
-    """面接の回答一覧を取得"""
-    interview = crud_interview.get(db, id=interview_id)
+    """面接回答の更新"""
+    # 面接の存在確認
+    interview = crud_interview.interview.get(db, id=interview_id)
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
-    return interview.interview_responses 
+    
+    # 回答の存在確認と更新
+    try:
+        response = crud_interview.interview.update_response(
+            db,
+            response_id=response_id,
+            obj_in=response_in
+        )
+        if not response:
+            raise HTTPException(status_code=404, detail="Response not found")
+        
+        return response
+    except Exception as e:
+        print(f"Error updating response: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update response: {str(e)}"
+        )
+
+@router.delete("/{interview_id}/responses/{response_id}")
+def delete_interview_response(
+    *,
+    db: Session = Depends(deps.get_db),
+    interview_id: int,
+    response_id: int,
+) -> Any:
+    """面接回答の削除"""
+    # 面接の存在確認
+    interview = crud_interview.interview.get(db, id=interview_id)
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    
+    # 回答の削除
+    success = crud_interview.interview.delete_response(db, response_id=response_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Response not found")
+    
+    return {"message": "回答を削除しました"} 

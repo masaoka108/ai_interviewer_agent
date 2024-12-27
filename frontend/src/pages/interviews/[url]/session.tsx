@@ -207,6 +207,7 @@ export default function InterviewSession() {
 - 面接の文脈に関係のない会話は避けてください
 - 面接官としての立場を常に維持してください
 - 具体的な例を求めながら、候補者の経験を深く理解するよう努めてください
+- 返答は長くならないようにしてください。目安として50文字以内で返答してください。
 - 日本語で応答してください
 `,
           modalities: ["audio", "text"],
@@ -1229,17 +1230,25 @@ export default function InterviewSession() {
 
           {showStartButton ? (
             <div className="text-center mb-8">
-              <button
-                onClick={handleStartInterview}
-                className={`px-6 py-3 rounded-lg font-medium ${
-                  isInitialized && browserSupported
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                }`}
-                disabled={!isInitialized || !browserSupported}
-              >
-                面接を開始する
-              </button>
+              <div className="text-center mb-4">
+                <p className="text-lg font-semibold mb-2">
+                  {interview?.candidate_name} 様
+                </p>
+                <p className="text-lg font-semibold mb-4">
+                  {interview?.job_posting?.title} 面接
+                </p>
+                <button
+                  onClick={handleStartInterview}
+                  className={`px-6 py-3 rounded-lg font-medium ${
+                    isInitialized && browserSupported
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                  }`}
+                  disabled={!isInitialized || !browserSupported}
+                >
+                  面接を開始する
+                </button>
+              </div>
               <p className="mt-2 text-sm text-gray-600">
                 ※ カメラとマイクの使用許可が必要です
               </p>

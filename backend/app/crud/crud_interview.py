@@ -178,4 +178,39 @@ class CRUDInterview(CRUDBase[Interview, InterviewCreate, InterviewUpdate]):
             return True
         return False
 
+    def update_response(
+        self,
+        db: Session,
+        *,
+        response_id: int,
+        obj_in: dict
+    ) -> InterviewResponse:
+        """面接回答を更新"""
+        db_response = db.query(InterviewResponse).filter(InterviewResponse.id == response_id).first()
+        if not db_response:
+            return None
+
+        for field, value in obj_in.items():
+            setattr(db_response, field, value)
+        
+        db.add(db_response)
+        db.commit()
+        db.refresh(db_response)
+        return db_response
+
+    def delete_response(
+        self,
+        db: Session,
+        *,
+        response_id: int
+    ) -> bool:
+        """面接回答を削除"""
+        db_response = db.query(InterviewResponse).filter(InterviewResponse.id == response_id).first()
+        if not db_response:
+            return False
+
+        db.delete(db_response)
+        db.commit()
+        return True
+
 interview = CRUDInterview(Interview) 
